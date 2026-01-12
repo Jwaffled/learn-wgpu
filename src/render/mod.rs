@@ -2,3 +2,7 @@ pub mod state;
 pub mod uniforms;
 pub mod mesh;
 pub mod vertex;
+pub mod texture;
+pub mod material;
+pub mod model;
+pub mod assets;

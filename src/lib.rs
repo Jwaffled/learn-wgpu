@@ -4,9 +4,8 @@ use winit::{application::ApplicationHandler, event::WindowEvent, event_loop::{Ac
 
 use crate::{render::state::RenderState, world::WorldState};
 
-mod texture;
-mod model;
-mod resources;
+// mod model;
+// mod resources;
 mod world;
 mod render;
 

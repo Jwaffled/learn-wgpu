@@ -1,6 +1,6 @@
 use wgpu::util::DeviceExt;
 
-use crate::render::vertex::Vertex;
+use crate::render::{material::MaterialHandle, vertex::Vertex};
 
 pub struct Mesh {
     pub vertex_buffer: wgpu::Buffer,
@@ -11,31 +11,48 @@ pub struct Mesh {
 impl Mesh {
     pub fn cube(device: &wgpu::Device) -> Self {
         let vertices: &[Vertex] = &[
-            // Front
-            Vertex { position: [-0.5, -0.5,  0.5], normal: [0.0, 0.0, 1.0] },
-            Vertex { position: [ 0.5, -0.5,  0.5], normal: [0.0, 0.0, 1.0] },
-            Vertex { position: [ 0.5,  0.5,  0.5], normal: [0.0, 0.0, 1.0] },
-            Vertex { position: [-0.5,  0.5,  0.5], normal: [0.0, 0.0, 1.0] },
-
-            // Back
-            Vertex { position: [-0.5, -0.5, -0.5], normal: [0.0, 0.0, -1.0] },
-            Vertex { position: [ 0.5, -0.5, -0.5], normal: [0.0, 0.0, -1.0] },
-            Vertex { position: [ 0.5,  0.5, -0.5], normal: [0.0, 0.0, -1.0] },
-            Vertex { position: [-0.5,  0.5, -0.5], normal: [0.0, 0.0, -1.0] },
+            Vertex { position: [-0.5, -0.5, 0.5], normal: [0.0, 0.0, 1.0], tex_coords: [0.0, 1.0] },
+            Vertex { position: [0.5, -0.5, 0.5], normal: [0.0, 0.0, 1.0], tex_coords: [1.0, 1.0] },
+            Vertex { position: [0.5, 0.5, 0.5], normal: [0.0, 0.0, 1.0], tex_coords: [1.0, 0.0] },
+            Vertex { position: [-0.5, 0.5, 0.5], normal: [0.0, 0.0, 1.0], tex_coords: [0.0, 0.0] },
+            Vertex { position: [0.5, -0.5, -0.5], normal: [0.0, 0.0, -1.0], tex_coords: [0.0, 1.0] },
+            Vertex { position: [-0.5, -0.5, -0.5], normal: [0.0, 0.0, -1.0], tex_coords: [1.0, 1.0] },
+            Vertex { position: [-0.5, 0.5, -0.5], normal: [0.0, 0.0, -1.0], tex_coords: [1.0, 0.0] },
+            Vertex { position: [0.5, 0.5, -0.5], normal: [0.0, 0.0, -1.0], tex_coords: [0.0, 0.0] },
+            Vertex { position: [0.5, -0.5, 0.5], normal: [1.0, 0.0, 0.0], tex_coords: [0.0, 1.0] },
+            Vertex { position: [0.5, -0.5, -0.5], normal: [1.0, 0.0, 0.0], tex_coords: [1.0, 1.0] },
+            Vertex { position: [0.5, 0.5, -0.5], normal: [1.0, 0.0, 0.0], tex_coords: [1.0, 0.0] },
+            Vertex { position: [0.5, 0.5, 0.5], normal: [1.0, 0.0, 0.0], tex_coords: [0.0, 0.0] },
+            Vertex { position: [-0.5, -0.5, -0.5], normal: [-1.0, 0.0, 0.0], tex_coords: [0.0, 1.0] },
+            Vertex { position: [-0.5, -0.5, 0.5], normal: [-1.0, 0.0, 0.0], tex_coords: [1.0, 1.0] },
+            Vertex { position: [-0.5, 0.5, 0.5], normal: [-1.0, 0.0, 0.0], tex_coords: [1.0, 0.0] },
+            Vertex { position: [-0.5, 0.5, -0.5], normal: [-1.0, 0.0, 0.0], tex_coords: [0.0, 0.0] },
+            Vertex { position: [-0.5, 0.5, 0.5], normal: [0.0, 1.0, 0.0], tex_coords: [0.0, 1.0] },
+            Vertex { position: [0.5, 0.5, 0.5], normal: [0.0, 1.0, 0.0], tex_coords: [1.0, 1.0] },
+            Vertex { position: [0.5, 0.5, -0.5], normal: [0.0, 1.0, 0.0], tex_coords: [1.0, 0.0] },
+            Vertex { position: [-0.5, 0.5, -0.5], normal: [0.0, 1.0, 0.0], tex_coords: [0.0, 0.0] },
+            Vertex { position: [-0.5, -0.5, -0.5], normal: [0.0, -1.0, 0.0], tex_coords: [0.0, 1.0] },
+            Vertex { position: [0.5, -0.5, -0.5], normal: [0.0, -1.0, 0.0], tex_coords: [1.0, 1.0] },
+            Vertex { position: [0.5, -0.5, 0.5], normal: [0.0, -1.0, 0.0], tex_coords: [1.0, 0.0] },
+            Vertex { position: [-0.5, -0.5, 0.5], normal: [0.0, -1.0, 0.0], tex_coords: [0.0, 0.0] },
         ];
-
+        
         let indices: &[u32] = &[
-            0, 1, 2, 2, 3, 0, // front
-            4, 6, 5, 6, 4, 7, // back
-            4, 5, 1, 1, 0, 4, // bottom
-            3, 2, 6, 6, 7, 3, // top
-            1, 5, 6, 6, 2, 1, // right
-            4, 0, 3, 3, 7, 4, // left
+            0, 1, 2, 2, 3, 0,       // Front
+            4, 5, 6, 6, 7, 4,       // Back
+            8, 9, 10, 10, 11, 8,    // Right
+            12, 13, 14, 14, 15, 12, // Left
+            16, 17, 18, 18, 19, 16, // Top
+            20, 21, 22, 22, 23, 20, // Bottom
         ];
 
+        Self::from_vertices_indices(vertices, indices, device)
+    }
+
+    pub fn from_vertices_indices(vertices: &[Vertex], indices: &[u32], device: &wgpu::Device) -> Self {
         let vertex_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
-                label: Some("Cube Vertex Buffer"),
+                label: Some("Vertex Buffer"),
                 contents: bytemuck::cast_slice(vertices),
                 usage: wgpu::BufferUsages::VERTEX,
             }
@@ -43,7 +60,7 @@ impl Mesh {
 
         let index_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
-                label: Some("Cube Index Buffer"),
+                label: Some("Index Buffer"),
                 contents: bytemuck::cast_slice(indices),
                 usage: wgpu::BufferUsages::INDEX,
             }

@@ -1,15 +1,17 @@
-use crate::render::mesh::MeshHandle;
+use std::{f32::consts::PI, sync::Arc};
+
+use crate::render::{assets::Assets, mesh::MeshHandle, model::ModelHandle};
 
 pub struct WorldState {
     pub time: f32,
     pub camera: CameraState,
-    pub objects: Vec<ObjectState>
+    pub objects: Vec<ObjectState>,
 }
 
 impl WorldState {
     pub fn new() -> Self {
         let camera = CameraState {
-            position: (0.0, 1.0, 2.5).into(),
+            position: (0.0, 1.0, 3.5).into(),
             yaw: -std::f32::consts::FRAC_PI_2,
             pitch: -0.3,
             fov_y_radians: std::f32::consts::FRAC_PI_3,
@@ -24,23 +26,23 @@ impl WorldState {
             objects: vec![
                 ObjectState {
                     position: (0.0, 0.0, 0.0).into(),
-                    rotation: glam::Quat::IDENTITY,
-                    scale: (1.0, 1.0, 1.0).into(),
-                    mesh_id: MeshHandle(0)
+                    rotation: glam::Quat::from_rotation_x(-PI / 2.0),
+                    scale: (0.1, 0.1, 0.1).into(),
+                    model: ModelHandle(0),
                 },
                 ObjectState {
                     position: (2.0, 0.0, 0.0).into(),
                     rotation: glam::Quat::IDENTITY,
-                    scale: (1.0, 1.0, 1.0).into(),
-                    mesh_id: MeshHandle(0)
+                    scale: (0.05, 0.05, 0.05).into(),
+                    model: ModelHandle(0),
                 },
                 ObjectState {
                     position: (-2.0, 0.0, 0.0).into(),
                     rotation: glam::Quat::IDENTITY,
-                    scale: (1.0, 2.0, 1.0).into(),
-                    mesh_id: MeshHandle(0)
+                    scale: (0.05, 0.1, 0.05).into(),
+                    model: ModelHandle(0),
                 }
-            ]
+            ],
         }
     }
 
@@ -48,7 +50,7 @@ impl WorldState {
         self.time += dt;
 
         for obj in &mut self.objects {
-            obj.rotation *= glam::Quat::from_rotation_y(0.5 * dt);
+            obj.rotation *= glam::Quat::from_rotation_z(0.5 * dt);
         }
     }
 
@@ -62,7 +64,7 @@ pub struct ObjectState {
     pub position: glam::Vec3,
     pub rotation: glam::Quat,
     pub scale: glam::Vec3,
-    pub mesh_id: MeshHandle,
+    pub model: ModelHandle,
 }
 
 impl ObjectState {
