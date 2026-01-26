@@ -1,4 +1,4 @@
-use crate::world::CameraState;
+use crate::game::world::CameraState;
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]

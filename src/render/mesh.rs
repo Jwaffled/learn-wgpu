@@ -1,6 +1,6 @@
 use wgpu::util::DeviceExt;
 
-use crate::render::{material::MaterialHandle, vertex::Vertex};
+use crate::{game::chunk::{Block, Chunk}, render::{material::MaterialHandle, vertex::Vertex}};
 
 pub struct Mesh {
     pub vertex_buffer: wgpu::Buffer,
@@ -76,3 +76,8 @@ impl Mesh {
 
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct MeshHandle(pub u32);
+
+pub struct CpuMesh {
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u32>
+}

@@ -3,7 +3,7 @@ use std::{collections::HashMap, sync::Arc};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::{render::{assets::Assets, mesh::{Mesh, MeshHandle}, model::{DrawModel, ModelHandle}, texture, uniforms::CameraUniform, vertex::Vertex}, world::WorldState};
+use crate::{game::world::WorldState, render::{assets::Assets, material::MaterialHandle, mesh::{CpuMesh, Mesh, MeshHandle}, model::{DrawModel, ModelHandle}, renderers::chunk::ChunkRenderer, scene::RenderScene, texture, uniforms::CameraUniform, vertex::Vertex}};
 
 pub const MAX_CUBES: usize = 1000;
 
@@ -120,6 +120,7 @@ pub struct RenderState {
     config: wgpu::SurfaceConfiguration,
     pub window: Arc<Window>,
     is_surface_configured: bool,
+    chunk_renderer: ChunkRenderer,
     render_pipeline: wgpu::RenderPipeline,
     pipeline_layouts: PipelineLayouts,
 
@@ -133,6 +134,7 @@ pub struct RenderState {
     instance_count: u32,
 
     depth_texture: texture::Texture,
+    block_material: MaterialHandle,
     // meshes: HashMap<MeshHandle, Mesh>,
 }
 
@@ -223,7 +225,8 @@ impl RenderState {
 
     let mut assets = Assets::new(&device, &queue, &pipeline_layouts);
 
-    assets.load_model("cockatiel.obj", &device, &queue, &pipeline_layouts.material).await.unwrap();
+    let atlas = assets.load_texture("spritesheet_tiles.png", &device, &queue).await?;
+    let block_material = assets.load_material(atlas, &device, &pipeline_layouts.material).await?;
 
     let depth_texture = texture::Texture::create_depth_texture(&device, &config, "Depth Texture");
 
@@ -236,6 +239,14 @@ impl RenderState {
         immediate_size: 0,
     });
 
+    let chunk_renderer = ChunkRenderer::new(
+        &device,
+        &pipeline_layouts,
+        config.format,
+        texture::Texture::DEPTH_FORMAT,
+        &shader_module
+    );
+
     let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
         label: Some("Render Pipeline"),
         layout: Some(&render_pipeline_layout),
@@ -244,7 +255,7 @@ impl RenderState {
             entry_point: Some("vs_main"),
             buffers: &[
                 Vertex::desc(),
-                Instance::desc(),
+                // Instance::desc(),
             ],
             compilation_options: wgpu::PipelineCompilationOptions::default(),
         },
@@ -294,6 +305,7 @@ impl RenderState {
             is_surface_configured: false,
             render_pipeline,
             pipeline_layouts,
+            chunk_renderer,
             assets,
 
             camera_uniform,
@@ -304,6 +316,7 @@ impl RenderState {
             instance_count: 0,
 
             depth_texture,
+            block_material,
             // meshes,
         })
     }
@@ -318,20 +331,11 @@ impl RenderState {
         }
     }
 
-    pub fn render(&mut self, state: &WorldState) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, scene: RenderScene) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
 
         if !self.is_surface_configured {
             return Ok(());
-        }
-
-        let mut batches: HashMap<ModelHandle, Vec<Instance>> = HashMap::new();
-
-        for object in state.objects.iter() {
-            batches
-                .entry(object.model)
-                .or_default()
-                .push(Instance::new(object.to_model_matrix()));
         }
 
         let output = self.surface.get_current_texture()?;
@@ -340,6 +344,12 @@ impl RenderState {
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("Render Encoder")
         });
+
+        let block_material = self.assets.get_material(self.block_material);
+        for (coord, mesh) in scene.dirty_chunks {
+            println!("Uploading chunk to GPU @ {:?}", coord);
+            self.chunk_renderer.upload_chunk(&self.device, coord, mesh);
+        }
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -371,28 +381,11 @@ impl RenderState {
                 multiview_mask: None
             });
 
-            render_pass.set_pipeline(&self.render_pipeline);
-
-            for (model_handle, instances) in batches {
-                // let mesh = &self.meshes[&mesh_handle];
-
-                self.instance_count = instances.len() as u32;
-                self.queue.write_buffer(
-                    &self.instance_buffer,
-                    0,
-                    bytemuck::cast_slice(&instances)
-                );
-
-                render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-
-                render_pass.draw_model_instanced(model_handle, &self.assets, 0..self.instance_count, &self.camera_bind_group);
-
-                // render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-                // render_pass.set_vertex_buffer(1, self.instance_buffer.slice(..));
-                // render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-
-                // render_pass.draw_indexed(0..mesh.index_count, 0, 0..self.instance_count);
-            }
+            self.chunk_renderer.draw(
+                &mut render_pass,
+                &self.camera_bind_group,
+                &block_material.bind_group
+            );
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));
@@ -407,20 +400,6 @@ impl RenderState {
             &self.camera_buffer,
             0,
             bytemuck::bytes_of(&self.camera_uniform)
-        );
-
-        let instances = world_state
-            .objects
-            .iter()
-            .map(|obj| Instance::new(obj.to_model_matrix()))
-            .collect::<Vec<_>>();
-
-        self.instance_count = instances.len() as u32;
-
-        self.queue.write_buffer(
-            &self.instance_buffer,
-            0,
-            bytemuck::cast_slice(&instances)
         );
     }
 }

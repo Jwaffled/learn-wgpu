@@ -15,6 +15,7 @@ wgpu = "28.0"
 pollster = "0.3"
 bytemuck = { version = "1.24", features = [ "derive" ] }
 glam = "0.30.9"
+rand = "0.9.2"
 tobj = { version = "3.2", default-features = false, features = ["async"]}
 
 [dependencies.image]

@@ -6,3 +6,5 @@ pub mod texture;
 pub mod material;
 pub mod model;
 pub mod assets;
+pub mod renderers;
+pub mod scene;
