@@ -1,5 +1,7 @@
 use std::sync::Arc;
 
+use libnoise::Source;
+use libnoise::prelude::*;
 use winit::{application::ApplicationHandler, event::{DeviceEvent, Event, KeyEvent, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window};
 
 use crate::{game::world::WorldState, input::Input, render::state::RenderState};
@@ -18,8 +20,14 @@ pub struct App {
 
 impl App {
     pub fn new() -> Self {
+        // let noise = Source::perlin(42).scale([0.1; 2]);
+        // Visualizer::<2>::new([100, 100], &noise)
+        //     .write_to_file("image-test.png")
+        //     .unwrap();
+        let mut world_state = WorldState::new();
+        world_state.generate_chunks();
         Self {
-            world_state: WorldState::new(),
+            world_state,
             render_state: None,
             window: None,
             cursor_visible: true,

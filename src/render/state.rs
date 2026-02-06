@@ -1,56 +1,9 @@
-use std::{collections::HashMap, sync::Arc};
+use std::sync::Arc;
 
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::{game::world::WorldState, render::{assets::Assets, material::MaterialHandle, mesh::{CpuMesh, Mesh, MeshHandle}, model::{DrawModel, ModelHandle}, renderers::chunk::ChunkRenderer, scene::RenderScene, texture, uniforms::CameraUniform, vertex::Vertex}};
-
-pub const MAX_CUBES: usize = 1000;
-
-#[repr(C)]
-#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
-pub struct Instance {
-    pub model: [[f32; 4]; 4],
-}
-
-impl Instance {
-    pub fn new(model: glam::Mat4) -> Self {
-        Self {
-            model: model.to_cols_array_2d()
-        }
-    }
-
-    pub fn desc() -> wgpu::VertexBufferLayout<'static> {
-        use std::mem;
-
-        wgpu::VertexBufferLayout {
-            array_stride: mem::size_of::<Instance>() as wgpu::BufferAddress,
-            step_mode: wgpu::VertexStepMode::Instance,
-            attributes: &[
-                wgpu::VertexAttribute {
-                    offset: 0,
-                    format: wgpu::VertexFormat::Float32x4,
-                    shader_location: 3,
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 4]>() as wgpu::BufferAddress,
-                    format: wgpu::VertexFormat::Float32x4,
-                    shader_location: 4
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                    format: wgpu::VertexFormat::Float32x4,
-                    shader_location: 5
-                },
-                wgpu::VertexAttribute {
-                    offset: mem::size_of::<[f32; 12]>() as wgpu::BufferAddress,
-                    format: wgpu::VertexFormat::Float32x4,
-                    shader_location: 6
-                }
-            ]
-        }
-    }
-}
+use crate::{game::world::WorldState, render::{assets::Assets, material::MaterialHandle, mesh::{CpuMesh, Mesh, MeshHandle}, model::{DrawModel, ModelHandle}, renderers::{chunk::ChunkRenderer, debug::DebugRenderer}, scene::RenderScene, texture, uniforms::CameraUniform, vertex::{DebugVertex, Vertex}}};
 
 pub struct PipelineLayouts {
     pub camera: wgpu::BindGroupLayout,
@@ -121,7 +74,7 @@ pub struct RenderState {
     pub window: Arc<Window>,
     is_surface_configured: bool,
     chunk_renderer: ChunkRenderer,
-    render_pipeline: wgpu::RenderPipeline,
+    debug_renderer: DebugRenderer,
     pipeline_layouts: PipelineLayouts,
 
     assets: Assets,
@@ -129,9 +82,6 @@ pub struct RenderState {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
-
-    instance_buffer: wgpu::Buffer,
-    instance_count: u32,
 
     depth_texture: texture::Texture,
     block_material: MaterialHandle,
@@ -155,144 +105,94 @@ impl RenderState {
         })
         .await?;
 
-    let (device, queue) = adapter
-        .request_device(&wgpu::DeviceDescriptor {
-            label: None,
-            required_features: wgpu::Features::empty(),
-            experimental_features: wgpu::ExperimentalFeatures::disabled(),
-            required_limits: wgpu::Limits::default(),
-            memory_hints: Default::default(),
-            trace: wgpu::Trace::Off,
-        })
-        .await?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: None,
+                required_features: wgpu::Features::empty(),
+                experimental_features: wgpu::ExperimentalFeatures::disabled(),
+                required_limits: wgpu::Limits::default(),
+                memory_hints: Default::default(),
+                trace: wgpu::Trace::Off,
+            })
+            .await?;
 
-    let surface_caps = surface.get_capabilities(&adapter);
+        let surface_caps = surface.get_capabilities(&adapter);
 
-    let surface_format = surface_caps.formats.iter()
-        .find(|f| f.is_srgb())
-        .copied()
-        .unwrap_or(surface_caps.formats[0]);
+        let surface_format = surface_caps.formats.iter()
+            .find(|f| f.is_srgb())
+            .copied()
+            .unwrap_or(surface_caps.formats[0]);
 
-    let config = wgpu::SurfaceConfiguration {
-        usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-        format: surface_format,
-        width: inner_size.width,
-        height: inner_size.height,
-        present_mode: surface_caps.present_modes[0],
-        alpha_mode: surface_caps.alpha_modes[0],
-        view_formats: vec![],
-        desired_maximum_frame_latency: 2,
-    };
-    let shader_src = format!("{}\n{}", String::from(include_str!("../vertex.wgsl")), String::from(include_str!("../fragment.wgsl")));
-    let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some("Shaders"),
-        source: wgpu::ShaderSource::Wgsl(shader_src.into())
-    });
+        let config = wgpu::SurfaceConfiguration {
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            format: surface_format,
+            width: inner_size.width,
+            height: inner_size.height,
+            present_mode: surface_caps.present_modes[0],
+            alpha_mode: surface_caps.alpha_modes[0],
+            view_formats: vec![],
+            desired_maximum_frame_latency: 2,
+        };
+        let shader_src = format!("{}\n{}", String::from(include_str!("../vertex.wgsl")), String::from(include_str!("../fragment.wgsl")));
+        let shader_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Shaders"),
+            source: wgpu::ShaderSource::Wgsl(shader_src.into())
+        });
 
-    let camera_uniform = CameraUniform::new();
+        let debug_shader_src = include_str!("../debug_shader.wgsl");
 
-    let camera_buffer = device.create_buffer_init(
-        &wgpu::util::BufferInitDescriptor {
-            label: Some("Camera Buffer"),
-            contents: bytemuck::cast_slice(&[camera_uniform]),
-            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
-        }
-    );
+        let debug_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("Debug Shader"),
+            source: wgpu::ShaderSource::Wgsl(debug_shader_src.into())
+        });
 
-    let instance_buffer = device.create_buffer(
-        &wgpu::BufferDescriptor {
-            label: Some("Instance Buffer"),
-            size: (MAX_CUBES * std::mem::size_of::<Instance>()) as wgpu::BufferAddress,
-            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
-            mapped_at_creation: false,
-        }
-    );
+        let camera_uniform = CameraUniform::new();
 
-    let pipeline_layouts = PipelineLayouts::new(&device);
+        let camera_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Camera Buffer"),
+                contents: bytemuck::cast_slice(&[camera_uniform]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            }
+        );
 
-    let camera_bind_group = device.create_bind_group(
-        &wgpu::BindGroupDescriptor {
-            label: Some("camera_bind_group"),
-            layout: &pipeline_layouts.camera,
-            entries: &[
-                wgpu::BindGroupEntry {
-                    binding: PipelineLayouts::CAMERA_SLOT,
-                    resource: camera_buffer.as_entire_binding()
-                }
-            ],
-        }
-    );
+        let pipeline_layouts = PipelineLayouts::new(&device);
 
-    let mut assets = Assets::new(&device, &queue, &pipeline_layouts);
+        let camera_bind_group = device.create_bind_group(
+            &wgpu::BindGroupDescriptor {
+                label: Some("camera_bind_group"),
+                layout: &pipeline_layouts.camera,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: PipelineLayouts::CAMERA_SLOT,
+                        resource: camera_buffer.as_entire_binding()
+                    }
+                ],
+            }
+        );
 
-    let atlas = assets.load_texture("spritesheet_tiles.png", &device, &queue).await?;
-    let block_material = assets.load_material(atlas, &device, &pipeline_layouts.material).await?;
+        let mut assets = Assets::new(&device, &queue, &pipeline_layouts);
 
-    let depth_texture = texture::Texture::create_depth_texture(&device, &config, "Depth Texture");
+        let atlas = assets.load_texture("spritesheet_tiles.png", &device, &queue).await?;
+        let block_material = assets.load_material(atlas, &device, &pipeline_layouts.material).await?;
 
-    let render_pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-        label: Some("Render Pipeline Layout"),
-        bind_group_layouts: &[
-            &pipeline_layouts.camera,
-            &pipeline_layouts.material
-        ],
-        immediate_size: 0,
-    });
+        let depth_texture = texture::Texture::create_depth_texture(&device, &config, "Depth Texture");
 
-    let chunk_renderer = ChunkRenderer::new(
-        &device,
-        &pipeline_layouts,
-        config.format,
-        texture::Texture::DEPTH_FORMAT,
-        &shader_module
-    );
+        let chunk_renderer = ChunkRenderer::new(
+            &device,
+            &pipeline_layouts,
+            config.format,
+            texture::Texture::DEPTH_FORMAT,
+            &shader_module
+        );
 
-    let render_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
-        label: Some("Render Pipeline"),
-        layout: Some(&render_pipeline_layout),
-        vertex: wgpu::VertexState {
-            module: &shader_module,
-            entry_point: Some("vs_main"),
-            buffers: &[
-                Vertex::desc(),
-                // Instance::desc(),
-            ],
-            compilation_options: wgpu::PipelineCompilationOptions::default(),
-        },
-        fragment: Some(wgpu::FragmentState {
-            module: &shader_module,
-            entry_point: Some("fs_main"),
-            targets: &[Some(wgpu::ColorTargetState {
-                format: config.format,
-                blend: Some(wgpu::BlendState::REPLACE),
-                write_mask: wgpu::ColorWrites::ALL,
-            })],
-            compilation_options: wgpu::PipelineCompilationOptions::default()
-        }),
-        primitive: wgpu::PrimitiveState {
-            topology: wgpu::PrimitiveTopology::TriangleList,
-            strip_index_format: None,
-            front_face: wgpu::FrontFace::Ccw,
-            cull_mode: Some(wgpu::Face::Back),
-            polygon_mode: wgpu::PolygonMode::Fill,
-            unclipped_depth: false,
-            conservative: false,
-        },
-        depth_stencil: Some(wgpu::DepthStencilState {
-            format: texture::Texture::DEPTH_FORMAT,
-            depth_write_enabled: true,
-            depth_compare: wgpu::CompareFunction::Less,
-            stencil: wgpu::StencilState::default(),
-            bias: wgpu::DepthBiasState::default(),
-        }),
-        multisample: wgpu::MultisampleState {
-            count: 1,
-            mask: !0,
-            alpha_to_coverage_enabled: false,
-        },
-        multiview_mask: None,
-        cache: None,
-    });
+        let debug_renderer = DebugRenderer::new(
+            &device,
+            &pipeline_layouts,
+            config.format,
+            texture::Texture::DEPTH_FORMAT,
+            &debug_shader
+        );
 
         Ok(Self {
             instance,
@@ -303,21 +203,17 @@ impl RenderState {
             config,
             window,
             is_surface_configured: false,
-            render_pipeline,
             pipeline_layouts,
             chunk_renderer,
+            debug_renderer,
             assets,
 
             camera_uniform,
             camera_buffer,
             camera_bind_group,
 
-            instance_buffer,
-            instance_count: 0,
-
             depth_texture,
             block_material,
-            // meshes,
         })
     }
 
@@ -346,8 +242,10 @@ impl RenderState {
         });
 
         let block_material = self.assets.get_material(self.block_material);
+
+        // TODO: Make this more efficient, no need to rebuild vertices on each frame
+        self.debug_renderer.rebuild_chunk_borders(&self.device, scene.visible_chunks.into_iter());
         for (coord, mesh) in scene.dirty_chunks {
-            println!("Uploading chunk to GPU @ {:?}", coord);
             self.chunk_renderer.upload_chunk(&self.device, coord, mesh);
         }
 
@@ -386,6 +284,13 @@ impl RenderState {
                 &self.camera_bind_group,
                 &block_material.bind_group
             );
+
+            if scene.debug_enabled {
+                self.debug_renderer.draw(
+                    &mut render_pass,
+                    &self.camera_bind_group
+                );
+            }
         }
 
         self.queue.submit(std::iter::once(encoder.finish()));

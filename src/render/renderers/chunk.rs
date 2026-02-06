@@ -87,6 +87,7 @@ impl ChunkRenderer {
         chunk_coord: ChunkCoord,
         mesh: CpuMesh
     ) {
+        println!("Num chunks loaded in renderer: {}", self.chunk_meshes.len());
         let vertex_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Chunk Vertex Buffer"),

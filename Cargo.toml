@@ -17,6 +17,7 @@ bytemuck = { version = "1.24", features = [ "derive" ] }
 glam = "0.30.9"
 rand = "0.9.2"
 tobj = { version = "3.2", default-features = false, features = ["async"]}
+libnoise = { version = "1.2.0", features = [ "image" ] }
 
 [dependencies.image]
 version = "0.24"

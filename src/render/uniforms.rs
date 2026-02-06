@@ -16,6 +16,7 @@ impl CameraUniform {
     pub fn update(&mut self, camera: &CameraState) {
         self.view_proj = camera
             .build_view_projection_matrix()
+            // .build_isometric_view_projection_matrix()
             .to_cols_array_2d();
     }
 }

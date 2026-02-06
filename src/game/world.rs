@@ -1,18 +1,30 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use rand::Rng;
 use winit::keyboard::KeyCode;
 
-use crate::{game::{chunk::{Block, Chunk, ChunkCoord}, meshing::ChunkMesher}, input::Input, render::scene::RenderScene};
+use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord, WorldCoord}, generator::WorldGenerator, meshing::ChunkMesher, player::Player}, input::Input, render::scene::RenderScene};
 
 pub struct WorldState {
     pub time: f32,
     pub camera: CameraState,
     pub chunks: HashMap<ChunkCoord, Chunk>,
-    rng: rand::rngs::ThreadRng,
+    player: Player,
+    generator: WorldGenerator,
+    chunk_events: Vec<ChunkEvent>,
+
+    // Configuration
+    debug_enabled: bool,
+}
+
+pub enum ChunkEvent {
+    ChunkLoaded,
+    ChunkUnloaded,
+    ChunkModified,
 }
 
 impl WorldState {
+    const RENDER_DISTANCE: isize = 4;
     pub fn new() -> Self {
         let camera = CameraState {
             position: (8.0, 5.0, 25.0).into(),
@@ -21,43 +33,74 @@ impl WorldState {
             fov_y_radians: std::f32::consts::FRAC_PI_2,
             aspect: 800.0 / 600.0,
             znear: 0.1,
-            zfar: 100.0,
+            zfar: 1000.0,
         };
 
-        let chunks = HashMap::from([
-            ((0, 0, 0), Chunk::test_chunk()),
-            ((0, 0, 1), Chunk::test_chunk())
-        ]);
+        let generator = WorldGenerator::new(42);
 
-        let rng = rand::rng();
+        // let chunks = Self::generate_chunks(&generator);
+        let chunks = HashMap::new();
+
+        let player = Player::new();
 
         Self {
             time: 0.0,
             camera,
             chunks,
-            rng,
+            player,
+            generator,
+            chunk_events: Vec::new(),
+
+            debug_enabled: false,
         }
     }
 
     pub fn update(&mut self, dt: f32, input: &Input) {
         self.time += dt;
 
+        let player_pos = self.player.position;
+
         self.handle_input(dt, input);
 
-        let chunk = self.chunks.get_mut(&(0, 0, 0)).unwrap();
+        if self.is_solid_at(self.player.position) {
+            self.player.position = player_pos;
+        }
 
-        let (x, y, z) = (self.rng.random_range(0..Chunk::CHUNK_SIZE), self.rng.random_range(0..Chunk::CHUNK_HEIGHT), self.rng.random_range(0..Chunk::CHUNK_SIZE));
-
-        chunk.set_block((x, y, z), Block::Water);
+        self.update_loaded_chunks();
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
         self.camera.aspect = width as f32 / height as f32;
     }
 
+    fn update_loaded_chunks(&mut self) {
+        let player_pos = self.camera.position;
+        let center = WorldCoord::from((player_pos.x as isize, player_pos.y as isize, player_pos.z as isize));
+        let (chunk_coord, _) = center.to_chunk();
+
+        let mut desired = HashSet::new();
+
+        for dx in -Self::RENDER_DISTANCE..Self::RENDER_DISTANCE {
+            for dz in -Self::RENDER_DISTANCE..Self::RENDER_DISTANCE {
+                desired.insert(ChunkCoord::from((chunk_coord.x + dx, 0, chunk_coord.z + dz)));
+            }
+        }
+
+        for coord in desired.iter() {
+            if !self.chunks.contains_key(coord) {
+                let chunk = self.generator.generate_chunk(*coord);
+                self.chunks.insert(*coord, chunk);
+                self.chunk_events.push(ChunkEvent::ChunkLoaded { });
+            }
+        }
+
+        self.chunks.retain(|coord, _| desired.contains(coord));
+    }
+
     fn handle_input(&mut self, dt: f32, input: &Input) {
         const CAMERA_SENS: f32 = 0.001;
         const CAMERA_SPEED: f32 = 10.0;
+        const PLAYER_SPEED: f32 = 3.0;
 
         self.camera.yaw += input.mouse_delta.0 * CAMERA_SENS;
         self.camera.pitch -= input.mouse_delta.1 * CAMERA_SENS;
@@ -67,49 +110,115 @@ impl WorldState {
 
 
         if input.is_pressed(KeyCode::KeyW) {
-            self.camera.position.z -= CAMERA_SPEED * dt;
+            self.player.position.z -= PLAYER_SPEED * dt;
         }
 
         if input.is_pressed(KeyCode::KeyS) {
-            self.camera.position.z += CAMERA_SPEED * dt;
+            self.player.position.z += PLAYER_SPEED * dt;
         }
 
         if input.is_pressed(KeyCode::KeyA) {
-            self.camera.position.x -= CAMERA_SPEED * dt;
+            self.player.position.x -= PLAYER_SPEED * dt;
         }
 
         if input.is_pressed(KeyCode::KeyD) {
-            self.camera.position.x += CAMERA_SPEED * dt;
+            self.player.position.x += PLAYER_SPEED * dt;
         }
 
         if input.is_pressed(KeyCode::Space) {
-            self.camera.position.y += CAMERA_SPEED * dt;
+            self.player.position.y += PLAYER_SPEED * dt;
         }
 
         if input.is_pressed(KeyCode::ControlLeft) {
+            self.player.position.y -= PLAYER_SPEED * dt;
+        }
+
+        if input.is_pressed(KeyCode::ArrowUp) {
+            self.camera.position.z -= CAMERA_SPEED * dt;
+        }
+
+        if input.is_pressed(KeyCode::ArrowDown) {
+            self.camera.position.z += CAMERA_SPEED * dt;
+        }
+
+        if input.is_pressed(KeyCode::ArrowLeft) {
+            self.camera.position.x -= CAMERA_SPEED * dt;
+        }
+
+        if input.is_pressed(KeyCode::ArrowRight) {
+            self.camera.position.x += CAMERA_SPEED * dt;
+        }
+
+        if input.is_pressed(KeyCode::Enter) {
+            self.camera.position.y += CAMERA_SPEED * dt;
+        }
+
+        if input.is_pressed(KeyCode::ShiftRight) {
             self.camera.position.y -= CAMERA_SPEED * dt;
         }
 
-        if input.is_pressed(KeyCode::KeyR) {
-            let new_chunk = Chunk::test_chunk();
-            self.chunks.insert((0, 0, 0), new_chunk);
+        if input.is_pressed(KeyCode::F3) {
+            self.debug_enabled = !self.debug_enabled;
         }
+    }
+
+    fn get_block(&self, coord: WorldCoord) -> Option<Block> {
+        let (chunk_coord, local_coord) = coord.to_chunk();
+
+        let chunk = match self.chunks.get(&chunk_coord) {
+            Some(chunk) => chunk,
+            None => return None,
+        };
+
+        return Some(chunk.get_block(local_coord));
+    }
+
+    fn is_solid_at(&self, world_pos: glam::Vec3) -> bool {
+        match self.get_block(WorldCoord::from((world_pos.x as isize, world_pos.y as isize, world_pos.z as isize))).unwrap_or_default() {
+            Block::Air => false,
+            other => true
+        }
+
     }
 
     pub fn collect_render_data(&mut self) -> RenderScene {
         let mut render_scene = RenderScene {
-            dirty_chunks: Vec::new()
+            dirty_chunks: Vec::new(),
+            visible_chunks: Vec::new(),
+            debug_enabled: self.debug_enabled,
         };
 
         for (coord, chunk) in self.chunks.iter_mut() {
+            render_scene.visible_chunks.push(*coord);
             if chunk.is_dirty() {
                 let mesh = ChunkMesher::create_mesh(chunk, *coord);
                 chunk.mark_clean();
                 render_scene.dirty_chunks.push((*coord, mesh))
             }
         }
+        let player_mesh = ChunkMesher::create_player_mesh(&self.player);
+        render_scene.dirty_chunks.push((ChunkCoord::from((100, 100, 100)), player_mesh));
 
         render_scene
+    }
+
+    pub fn poll_chunk_events(&mut self) -> Vec<ChunkEvent> {
+        std::mem::take(&mut self.chunk_events)
+    }
+
+    pub fn generate_chunks(&mut self) {
+        let mut chunks = HashMap::new();
+
+        for x in -Self::RENDER_DISTANCE..Self::RENDER_DISTANCE {
+            for z in -Self::RENDER_DISTANCE..Self::RENDER_DISTANCE {
+                let coord = ChunkCoord { x, y: 0, z };
+                let chunk = self.generator.generate_chunk(coord);
+                chunks.insert(coord, chunk);
+                self.chunk_events.push(ChunkEvent::ChunkLoaded { });
+            }
+        }
+
+        self.chunks = chunks;
     }
 }
 
