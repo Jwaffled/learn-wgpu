@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use wgpu::util::DeviceExt;
 
@@ -6,9 +6,12 @@ use crate::{game::chunk::{Chunk, ChunkCoord}, render::{state::PipelineLayouts, v
 
 pub struct DebugRenderer {
     pipeline: wgpu::RenderPipeline,
+    chunks: HashMap<ChunkCoord, DebugGpuMesh>,
+}
+
+struct DebugGpuMesh {
     vertex_buffer: wgpu::Buffer,
     vertex_count: u32,
-    chunk_coords: HashSet<ChunkCoord>,
 }
 
 impl DebugRenderer {
@@ -69,38 +72,21 @@ impl DebugRenderer {
             }
         );
 
-        let vertex_buffer = device.create_buffer_init(
-            &wgpu::util::BufferInitDescriptor {
-                label: Some("Debug Vertex Buffer"),
-                contents: &[],
-                usage: wgpu::BufferUsages::VERTEX,
-            }
-        );
-
-        let vertex_count = 0;
-
-        let chunk_coords = HashSet::new();
+        let chunks = HashMap::new();
 
         Self {
             pipeline,
-            vertex_buffer,
-            vertex_count,
-            chunk_coords,
+            chunks,
         }
     }
 
-    pub fn rebuild_chunk_borders(
+    pub fn load_chunk(
         &mut self,
         device: &wgpu::Device,
-        chunks: impl Iterator<Item = ChunkCoord>
+        coord: ChunkCoord
     ) {
-        let mut vertices = Vec::new();
-
-        for chunk in chunks {
-            vertices.extend(Self::chunk_border_vertices(chunk));
-        }
-
-        self.vertex_buffer = device.create_buffer_init(
+        let vertices = Self::chunk_border_vertices(coord);
+        let vertex_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Debug Vertex Buffer"),
                 contents: bytemuck::cast_slice(&vertices),
@@ -108,8 +94,18 @@ impl DebugRenderer {
             }
         );
 
-        self.vertex_count = vertices.len() as u32;
-        println!("Rebuilt chunk borders with {} vertices", vertices.len());
+        let vertex_count = vertices.len() as u32;
+
+        let mesh = DebugGpuMesh {
+            vertex_buffer,
+            vertex_count,
+        };
+
+        self.chunks.insert(coord, mesh);
+    }
+
+    pub fn unload_chunk(&mut self, coord: ChunkCoord) {
+        self.chunks.remove(&coord);
     }
 
     pub fn draw<'a>(
@@ -119,8 +115,10 @@ impl DebugRenderer {
     ) {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(PipelineLayouts::CAMERA_SLOT, camera_bind_group, &[]);
-        render_pass.set_vertex_buffer(0, self.vertex_buffer.slice(..));
-        render_pass.draw(0..self.vertex_count, 0..1);
+        for (_, mesh) in &self.chunks {
+            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+            render_pass.draw(0..mesh.vertex_count, 0..1);
+        }
     }
 
     fn chunk_border_vertices(coord: ChunkCoord) -> Vec<DebugVertex> {

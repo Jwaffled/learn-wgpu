@@ -1,4 +1,6 @@
-use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord}, player::Player, world::WorldState}, render::{mesh::CpuMesh, vertex::Vertex}};
+use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex, mpsc::{self, Receiver, Sender}}, thread};
+
+use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord}, generator::WorldGenerator, player::Player, world::{ChunkEvent, FrameEvent, WorldState}}, render::{mesh::CpuMesh, vertex::Vertex}};
 
 pub struct ChunkMesher {
 
@@ -203,3 +205,133 @@ impl ChunkMesher {
     }
 }
 
+pub struct ChunkManager {
+    chunks: HashMap<ChunkCoord, Chunk>,
+    in_flight: HashSet<ChunkCoord>,
+    task_tx: Sender<Task>,
+    result_rx: Receiver<TaskResult>,
+}
+
+impl ChunkManager {
+    const NUM_WORKERS: u8 = 2;
+    pub fn new() -> Self {
+        let chunks = HashMap::new();
+        let in_flight = HashSet::new();
+        let generator = WorldGenerator::new(42);
+        let (task_tx, task_rx) = mpsc::channel::<Task>();
+        let (result_tx, result_rx) = mpsc::channel::<TaskResult>();
+
+        let task_rx = Arc::new(Mutex::new(task_rx));
+        for _ in 0..Self::NUM_WORKERS {
+            let thread_rx = Arc::clone(&task_rx);
+            let thread_result_tx = result_tx.clone();
+            let thread_world_generator = generator.clone();
+            thread::spawn(move || {
+                Self::worker_thread(thread_rx, thread_result_tx, thread_world_generator);
+            });
+        }
+
+        Self {
+            chunks,
+            in_flight,
+            task_tx,
+            result_rx,
+        }
+    }
+
+    pub fn update(&mut self, frame_event: &mut FrameEvent) {
+        while let Ok(result) = self.result_rx.try_recv() {
+            match result {
+                TaskResult::ChunkGenerated { coord, chunk } => {
+                    self.chunks.insert(coord, chunk.clone());
+                    self.in_flight.remove(&coord);
+
+                    self.task_tx.send(Task::MeshChunk { coord, chunk }).unwrap();
+                },
+                TaskResult::ChunkMeshed { coord, mesh } => {
+                    if self.chunks.contains_key(&coord) {
+                        frame_event.chunk_events.push(ChunkEvent::ChunkLoaded { coord, mesh });
+                    }
+                }
+            }
+        }
+    }
+
+    pub fn request_chunk(&mut self, coord: ChunkCoord) {
+        if !self.chunks.contains_key(&coord) && !self.in_flight.contains(&coord) {
+            self.in_flight.insert(coord);
+            let _ = self.task_tx.send(Task::GenerateChunk { coord });
+        }
+    }
+
+    pub fn retain_chunks(&mut self, desired: HashSet<ChunkCoord>, frame_event: &mut FrameEvent) {
+        self.chunks.retain(|coord, _| {
+            if !desired.contains(coord) {
+                frame_event.chunk_events.push(ChunkEvent::ChunkUnloaded { coord: *coord });
+                false
+            } else {
+                true
+            }
+        });
+    }
+
+    pub fn unload_chunk(&mut self, coord: ChunkCoord, frame_event: &mut FrameEvent) {
+        if self.chunks.remove(&coord).is_some() {
+            frame_event.chunk_events.push(ChunkEvent::ChunkUnloaded { coord });
+        }
+    }
+
+    fn worker_thread(
+        task_rx: Arc<Mutex<Receiver<Task>>>,
+        result_tx: Sender<TaskResult>,
+        generator: WorldGenerator
+    ) {
+        loop {
+            let task = {
+                let lock = task_rx.lock().expect("Mutex poisoned");
+                match lock.recv() {
+                    Ok(t) => t,
+                    Err(_) => break,
+                }
+            };
+
+            let result = match task {
+                Task::GenerateChunk { coord } => {
+                    let chunk = generator.generate_chunk(coord);
+                    TaskResult::ChunkGenerated { coord, chunk }
+                },
+                Task::MeshChunk { coord, chunk } => {
+                    let mesh = ChunkMesher::create_mesh(&chunk, coord);
+                    TaskResult::ChunkMeshed { coord, mesh }
+                }
+            };
+
+            if let Err(_) = result_tx.send(result) {
+                break;
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum Task {
+    GenerateChunk {
+        coord: ChunkCoord
+    },
+    MeshChunk {
+        coord: ChunkCoord,
+        chunk: Chunk
+    }
+}
+
+#[derive(Debug)]
+pub enum TaskResult {
+    ChunkGenerated {
+        coord: ChunkCoord,
+        chunk: Chunk,
+    },
+    ChunkMeshed {
+        coord: ChunkCoord,
+        mesh: CpuMesh
+    }
+}

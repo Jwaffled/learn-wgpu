@@ -3,24 +3,28 @@ use std::collections::{HashMap, HashSet};
 use rand::Rng;
 use winit::keyboard::KeyCode;
 
-use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord, WorldCoord}, generator::WorldGenerator, meshing::ChunkMesher, player::Player}, input::Input, render::scene::RenderScene};
+use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord, WorldCoord}, generator::WorldGenerator, meshing::{ChunkManager, ChunkMesher}, player::Player}, input::Input, render::{mesh::CpuMesh, scene::RenderScene}};
 
 pub struct WorldState {
     pub time: f32,
     pub camera: CameraState,
-    pub chunks: HashMap<ChunkCoord, Chunk>,
+    chunk_manager: ChunkManager,
     player: Player,
-    generator: WorldGenerator,
-    chunk_events: Vec<ChunkEvent>,
+    frame_event: FrameEvent,
 
     // Configuration
     debug_enabled: bool,
 }
 
+#[derive(Default)]
+pub struct FrameEvent {
+    pub chunk_events: Vec<ChunkEvent>,
+}
+
 pub enum ChunkEvent {
-    ChunkLoaded,
-    ChunkUnloaded,
-    ChunkModified,
+    ChunkLoaded { coord: ChunkCoord, mesh: CpuMesh },
+    ChunkUnloaded { coord: ChunkCoord },
+    ChunkModified { coord: ChunkCoord, mesh: CpuMesh },
 }
 
 impl WorldState {
@@ -36,20 +40,16 @@ impl WorldState {
             zfar: 1000.0,
         };
 
-        let generator = WorldGenerator::new(42);
-
-        // let chunks = Self::generate_chunks(&generator);
-        let chunks = HashMap::new();
+        let chunk_manager = ChunkManager::new();
 
         let player = Player::new();
 
         Self {
             time: 0.0,
             camera,
-            chunks,
+            chunk_manager,
             player,
-            generator,
-            chunk_events: Vec::new(),
+            frame_event: FrameEvent { chunk_events: Vec::new() },
 
             debug_enabled: false,
         }
@@ -57,6 +57,8 @@ impl WorldState {
 
     pub fn update(&mut self, dt: f32, input: &Input) {
         self.time += dt;
+        self.update_loaded_chunks();
+        self.chunk_manager.update(&mut self.frame_event);
 
         let player_pos = self.player.position;
 
@@ -66,7 +68,6 @@ impl WorldState {
             self.player.position = player_pos;
         }
 
-        self.update_loaded_chunks();
     }
 
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -87,19 +88,15 @@ impl WorldState {
         }
 
         for coord in desired.iter() {
-            if !self.chunks.contains_key(coord) {
-                let chunk = self.generator.generate_chunk(*coord);
-                self.chunks.insert(*coord, chunk);
-                self.chunk_events.push(ChunkEvent::ChunkLoaded { });
-            }
+            self.chunk_manager.request_chunk(*coord);
         }
 
-        self.chunks.retain(|coord, _| desired.contains(coord));
+        self.chunk_manager.retain_chunks(desired, &mut self.frame_event);
     }
 
     fn handle_input(&mut self, dt: f32, input: &Input) {
         const CAMERA_SENS: f32 = 0.001;
-        const CAMERA_SPEED: f32 = 10.0;
+        const CAMERA_SPEED: f32 = 100.0;
         const PLAYER_SPEED: f32 = 3.0;
 
         self.camera.yaw += input.mouse_delta.0 * CAMERA_SENS;
@@ -165,12 +162,13 @@ impl WorldState {
     fn get_block(&self, coord: WorldCoord) -> Option<Block> {
         let (chunk_coord, local_coord) = coord.to_chunk();
 
-        let chunk = match self.chunks.get(&chunk_coord) {
-            Some(chunk) => chunk,
-            None => return None,
-        };
+        // let chunk = match self.chunk_manager.get_chunk(&chunk_coord) {
+        //     Some(chunk) => chunk,
+        //     None => return None,
+        // };
 
-        return Some(chunk.get_block(local_coord));
+        // return Some(chunk.get_block(local_coord));
+        return None;
     }
 
     fn is_solid_at(&self, world_pos: glam::Vec3) -> bool {
@@ -181,44 +179,21 @@ impl WorldState {
 
     }
 
-    pub fn collect_render_data(&mut self) -> RenderScene {
-        let mut render_scene = RenderScene {
-            dirty_chunks: Vec::new(),
-            visible_chunks: Vec::new(),
-            debug_enabled: self.debug_enabled,
-        };
-
-        for (coord, chunk) in self.chunks.iter_mut() {
-            render_scene.visible_chunks.push(*coord);
-            if chunk.is_dirty() {
-                let mesh = ChunkMesher::create_mesh(chunk, *coord);
-                chunk.mark_clean();
-                render_scene.dirty_chunks.push((*coord, mesh))
-            }
-        }
-        let player_mesh = ChunkMesher::create_player_mesh(&self.player);
-        render_scene.dirty_chunks.push((ChunkCoord::from((100, 100, 100)), player_mesh));
-
-        render_scene
-    }
-
-    pub fn poll_chunk_events(&mut self) -> Vec<ChunkEvent> {
-        std::mem::take(&mut self.chunk_events)
+    pub fn poll_events(&mut self) -> FrameEvent {
+        std::mem::take(&mut self.frame_event)
     }
 
     pub fn generate_chunks(&mut self) {
-        let mut chunks = HashMap::new();
-
         for x in -Self::RENDER_DISTANCE..Self::RENDER_DISTANCE {
             for z in -Self::RENDER_DISTANCE..Self::RENDER_DISTANCE {
                 let coord = ChunkCoord { x, y: 0, z };
-                let chunk = self.generator.generate_chunk(coord);
-                chunks.insert(coord, chunk);
-                self.chunk_events.push(ChunkEvent::ChunkLoaded { });
+                self.chunk_manager.request_chunk(coord);
             }
         }
+    }
 
-        self.chunks = chunks;
+    pub fn is_debug_enabled(&self) -> bool {
+        return self.debug_enabled;
     }
 }
 

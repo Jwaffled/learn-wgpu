@@ -78,9 +78,12 @@ impl ApplicationHandler<RenderState> for App {
             WindowEvent::RedrawRequested => {
                 self.world_state.update(0.01, &self.input_state);
                 state.update(&self.world_state);
-                let render_scene = self.world_state.collect_render_data();
+                let events = self.world_state.poll_events();
+                state.process(events);
+                // let render_scene = self.world_state.collect_render_data();
+                let debug_enabled = self.world_state.is_debug_enabled();
                 self.input_state.mouse_delta = (0.0, 0.0);
-                match state.render(render_scene) {
+                match state.render(debug_enabled) {
                     Ok(_) => {},
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                         let size = state.window.inner_size();

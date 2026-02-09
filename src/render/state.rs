@@ -3,7 +3,7 @@ use std::sync::Arc;
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::{game::world::WorldState, render::{assets::Assets, material::MaterialHandle, mesh::{CpuMesh, Mesh, MeshHandle}, model::{DrawModel, ModelHandle}, renderers::{chunk::ChunkRenderer, debug::DebugRenderer}, scene::RenderScene, texture, uniforms::CameraUniform, vertex::{DebugVertex, Vertex}}};
+use crate::{game::world::{ChunkEvent, FrameEvent, WorldState}, render::{assets::Assets, material::MaterialHandle, mesh::{CpuMesh, Mesh, MeshHandle}, model::{DrawModel, ModelHandle}, renderers::{chunk::ChunkRenderer, debug::DebugRenderer}, scene::RenderScene, texture, uniforms::CameraUniform, vertex::{DebugVertex, Vertex}}};
 
 pub struct PipelineLayouts {
     pub camera: wgpu::BindGroupLayout,
@@ -85,7 +85,6 @@ pub struct RenderState {
 
     depth_texture: texture::Texture,
     block_material: MaterialHandle,
-    // meshes: HashMap<MeshHandle, Mesh>,
 }
 
 impl RenderState {
@@ -227,7 +226,23 @@ impl RenderState {
         }
     }
 
-    pub fn render(&mut self, scene: RenderScene) -> Result<(), wgpu::SurfaceError> {
+    pub fn process(&mut self, event: FrameEvent) {
+        for event in event.chunk_events {
+            match event {
+                ChunkEvent::ChunkLoaded { coord, mesh } => {
+                    self.chunk_renderer.load_chunk(&self.device, coord, mesh);
+                    self.debug_renderer.load_chunk(&self.device, coord);
+                },
+                ChunkEvent::ChunkUnloaded { coord } => {
+                    self.chunk_renderer.unload_chunk(coord);
+                    self.debug_renderer.unload_chunk(coord);
+                },
+                ChunkEvent::ChunkModified { coord, mesh } => self.chunk_renderer.load_chunk(&self.device, coord, mesh),
+            }
+        }
+    }
+
+    pub fn render(&mut self, debug_enabled: bool) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
 
         if !self.is_surface_configured {
@@ -242,12 +257,6 @@ impl RenderState {
         });
 
         let block_material = self.assets.get_material(self.block_material);
-
-        // TODO: Make this more efficient, no need to rebuild vertices on each frame
-        self.debug_renderer.rebuild_chunk_borders(&self.device, scene.visible_chunks.into_iter());
-        for (coord, mesh) in scene.dirty_chunks {
-            self.chunk_renderer.upload_chunk(&self.device, coord, mesh);
-        }
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -285,7 +294,7 @@ impl RenderState {
                 &block_material.bind_group
             );
 
-            if scene.debug_enabled {
+            if debug_enabled {
                 self.debug_renderer.draw(
                     &mut render_pass,
                     &self.camera_bind_group

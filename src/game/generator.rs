@@ -2,6 +2,7 @@ use libnoise::{Generator, Perlin, Scale, Source};
 
 use crate::game::chunk::{Block, Chunk, ChunkCoord, LocalCoord};
 
+#[derive(Clone)]
 pub struct WorldGenerator {
     generator: Scale<2, Perlin<2>>,
 }
@@ -39,7 +40,6 @@ impl WorldGenerator {
 
     fn height_at(&self, x: isize, z: isize) -> isize {
         let n = self.generator.sample([x as f64, z as f64]);
-        // println!("Generated number {}", n);
         ((n + 1.0) * 0.5 * 20.0) as isize + 20
     }
 }

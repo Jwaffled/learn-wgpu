@@ -81,7 +81,7 @@ impl ChunkRenderer {
         }
     }
 
-    pub fn upload_chunk(
+    pub fn load_chunk(
         &mut self,
         device: &wgpu::Device,
         chunk_coord: ChunkCoord,
@@ -112,6 +112,10 @@ impl ChunkRenderer {
                 index_count: mesh.indices.len() as u32,
             }
         );
+    }
+
+    pub fn unload_chunk(&mut self, coord: ChunkCoord) {
+        self.chunk_meshes.remove(&coord);
     }
 
     pub fn draw<'a>(

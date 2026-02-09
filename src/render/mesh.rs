@@ -77,6 +77,7 @@ impl Mesh {
 #[derive(Copy, Clone, Eq, PartialEq, Hash, Debug)]
 pub struct MeshHandle(pub u32);
 
+#[derive(Debug)]
 pub struct CpuMesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u32>
