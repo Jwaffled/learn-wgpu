@@ -1,9 +1,10 @@
-use std::sync::Arc;
+use std::{sync::Arc, time::Instant};
 
+use glyphon::{Resolution, Viewport};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::{game::world::{ChunkEvent, FrameEvent, WorldState}, render::{assets::Assets, material::MaterialHandle, mesh::{CpuMesh, Mesh, MeshHandle}, model::{DrawModel, ModelHandle}, renderers::{chunk::ChunkRenderer, debug::DebugRenderer}, scene::RenderScene, texture, uniforms::CameraUniform, vertex::{DebugVertex, Vertex}}};
+use crate::{game::world::{ChunkEvent, FrameEvent, WorldState}, render::{assets::Assets, material::MaterialHandle, mesh::{CpuMesh, Mesh, MeshHandle}, model::{DrawModel, ModelHandle}, renderers::{chunk::ChunkRenderer, debug::DebugRenderer, debug_text::{DebugStats, DebugTextRenderer, FrameStats}}, scene::RenderScene, texture, uniforms::CameraUniform, vertex::{DebugVertex, Vertex}}};
 
 pub struct PipelineLayouts {
     pub camera: wgpu::BindGroupLayout,
@@ -71,10 +72,12 @@ pub struct RenderState {
     device: wgpu::Device,
     queue: wgpu::Queue,
     config: wgpu::SurfaceConfiguration,
+    viewport: glyphon::Viewport,
     pub window: Arc<Window>,
     is_surface_configured: bool,
     chunk_renderer: ChunkRenderer,
     debug_renderer: DebugRenderer,
+    debug_text_renderer: DebugTextRenderer,
     pipeline_layouts: PipelineLayouts,
 
     assets: Assets,
@@ -85,6 +88,14 @@ pub struct RenderState {
 
     depth_texture: texture::Texture,
     block_material: MaterialHandle,
+
+    // Stats
+    last_frame_time: Instant,
+    frame_ms: f32,
+    fps: f32,
+    
+    fps_accumulator: f32,
+    fps_frames: u32,
 }
 
 impl RenderState {
@@ -121,6 +132,10 @@ impl RenderState {
             .find(|f| f.is_srgb())
             .copied()
             .unwrap_or(surface_caps.formats[0]);
+
+        let text_cache = glyphon::Cache::new(&device);
+
+        let viewport = Viewport::new(&device, &text_cache);
 
         let config = wgpu::SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
@@ -193,6 +208,20 @@ impl RenderState {
             &debug_shader
         );
 
+        let mut debug_text_renderer = DebugTextRenderer::new(
+            &device,
+            &queue,
+            &text_cache,
+            config.format,
+        );
+
+        // Stats
+        let last_frame_time = Instant::now();
+        let frame_ms = 0.0;
+        let fps = 0.0;
+        let fps_accumulator = 0.0;
+        let fps_frames = 0;
+
         Ok(Self {
             instance,
             adapter,
@@ -200,11 +229,13 @@ impl RenderState {
             device,
             queue,
             config,
+            viewport,
             window,
             is_surface_configured: false,
             pipeline_layouts,
             chunk_renderer,
             debug_renderer,
+            debug_text_renderer,
             assets,
 
             camera_uniform,
@@ -213,6 +244,13 @@ impl RenderState {
 
             depth_texture,
             block_material,
+
+            // Stats
+            last_frame_time,
+            frame_ms,
+            fps,
+            fps_accumulator,
+            fps_frames
         })
     }
 
@@ -223,6 +261,10 @@ impl RenderState {
             self.surface.configure(&self.device, &self.config);
             self.is_surface_configured = true;
             self.depth_texture = texture::Texture::create_depth_texture(&self.device, &self.config, "Depth Texture");
+            self.viewport.update(&self.queue, Resolution {
+                width,
+                height
+            });
         }
     }
 
@@ -242,7 +284,7 @@ impl RenderState {
         }
     }
 
-    pub fn render(&mut self, debug_enabled: bool) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, world: &WorldState) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
 
         if !self.is_surface_configured {
@@ -257,6 +299,14 @@ impl RenderState {
         });
 
         let block_material = self.assets.get_material(self.block_material);
+        self.debug_text_renderer.update_text(
+            DebugStats {
+                chunk: world.chunk_stats(),
+                frame: self.frame_stats(),
+            },
+            500,
+            300
+        );
 
         {
             let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -294,7 +344,7 @@ impl RenderState {
                 &block_material.bind_group
             );
 
-            if debug_enabled {
+            if world.debug_enabled {
                 self.debug_renderer.draw(
                     &mut render_pass,
                     &self.camera_bind_group
@@ -302,8 +352,45 @@ impl RenderState {
             }
         }
 
+        {
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Debug Text Pass"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    depth_slice: None,
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Load,
+                        store: wgpu::StoreOp::Store,
+                    }
+                })],
+                occlusion_query_set: None,
+                timestamp_writes: None,
+                multiview_mask: None,
+                depth_stencil_attachment: None,
+            });
+
+            self.debug_text_renderer.draw(&self.device, &self.queue, &mut render_pass, &self.viewport);
+        }
+
         self.queue.submit(std::iter::once(encoder.finish()));
         output.present();
+
+        let now = Instant::now();
+        let delta = now - self.last_frame_time;
+        self.last_frame_time = now;
+
+        let frame_ms = delta.as_secs_f32() * 1000.0;
+        self.frame_ms = frame_ms;
+
+        self.fps_accumulator += delta.as_secs_f32();
+        self.fps_frames += 1;
+
+        if self.fps_accumulator >= 0.5 {
+            self.fps = self.fps_frames as f32 / self.fps_accumulator;
+            self.fps_accumulator = 0.0;
+            self.fps_frames = 0;
+        }
 
         Ok(())
     }
@@ -315,5 +402,12 @@ impl RenderState {
             0,
             bytemuck::bytes_of(&self.camera_uniform)
         );
+    }
+
+    pub fn frame_stats(&self) -> FrameStats {
+        FrameStats { 
+            fps: self.fps,
+            frame_ms: self.frame_ms,
+        }
     }
 }

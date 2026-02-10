@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use rand::Rng;
 use winit::keyboard::KeyCode;
 
-use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord, WorldCoord}, generator::WorldGenerator, meshing::{ChunkManager, ChunkMesher}, player::Player}, input::Input, render::{mesh::CpuMesh, scene::RenderScene}};
+use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord, WorldCoord}, generator::WorldGenerator, meshing::{ChunkManager, ChunkMesher}, player::Player}, input::Input, render::{mesh::CpuMesh, renderers::debug_text::ChunkStats, scene::RenderScene}};
 
 pub struct WorldState {
     pub time: f32,
@@ -13,7 +13,7 @@ pub struct WorldState {
     frame_event: FrameEvent,
 
     // Configuration
-    debug_enabled: bool,
+    pub debug_enabled: bool,
 }
 
 #[derive(Default)]
@@ -192,8 +192,8 @@ impl WorldState {
         }
     }
 
-    pub fn is_debug_enabled(&self) -> bool {
-        return self.debug_enabled;
+    pub fn chunk_stats(&self) -> ChunkStats {
+        self.chunk_manager.stats()
     }
 }
 

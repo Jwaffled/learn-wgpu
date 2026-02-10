@@ -1,6 +1,6 @@
-use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex, mpsc::{self, Receiver, Sender}}, thread};
+use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex, mpsc::{self, Receiver, Sender}}, thread, time::{Duration, Instant}};
 
-use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord}, generator::WorldGenerator, player::Player, world::{ChunkEvent, FrameEvent, WorldState}}, render::{mesh::CpuMesh, vertex::Vertex}};
+use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord}, generator::WorldGenerator, player::Player, world::{ChunkEvent, FrameEvent, WorldState}}, render::{mesh::CpuMesh, renderers::debug_text::ChunkStats, vertex::Vertex}};
 
 pub struct ChunkMesher {
 
@@ -210,6 +210,13 @@ pub struct ChunkManager {
     in_flight: HashSet<ChunkCoord>,
     task_tx: Sender<Task>,
     result_rx: Receiver<TaskResult>,
+
+    // Stats
+    meshing: usize,
+    total_generated: usize,
+    avg_gen_us: f32,
+    total_meshed: usize,
+    avg_mesh_us: f32,
 }
 
 impl ChunkManager {
@@ -236,19 +243,33 @@ impl ChunkManager {
             in_flight,
             task_tx,
             result_rx,
+            meshing: 0,
+            total_generated: 0,
+            avg_gen_us: 0.0,
+            total_meshed: 0,
+            avg_mesh_us: 0.0
         }
     }
 
     pub fn update(&mut self, frame_event: &mut FrameEvent) {
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
-                TaskResult::ChunkGenerated { coord, chunk } => {
+                TaskResult::ChunkGenerated { coord, chunk, duration } => {
                     self.chunks.insert(coord, chunk.clone());
                     self.in_flight.remove(&coord);
 
+                    self.avg_gen_us = ((self.avg_gen_us * self.total_generated as f32) + duration.as_micros() as f32) / (self.total_generated as f32 + 1.0);
+                    self.meshing += 1;
+                    self.total_generated += 1;
+
                     self.task_tx.send(Task::MeshChunk { coord, chunk }).unwrap();
                 },
-                TaskResult::ChunkMeshed { coord, mesh } => {
+                TaskResult::ChunkMeshed { coord, mesh, duration } => {
+
+                    self.avg_mesh_us = ((self.avg_mesh_us * self.total_meshed as f32) + duration.as_micros() as f32) / (self.total_meshed as f32 + 1.0);
+                    self.meshing -= 1;
+                    self.total_meshed += 1;
+
                     if self.chunks.contains_key(&coord) {
                         frame_event.chunk_events.push(ChunkEvent::ChunkLoaded { coord, mesh });
                     }
@@ -281,6 +302,16 @@ impl ChunkManager {
         }
     }
 
+    pub fn stats(&self) -> ChunkStats {
+        ChunkStats { 
+            loaded: self.chunks.len(),
+            in_flight: self.in_flight.len(),
+            meshing: self.meshing,
+            avg_gen_us: self.avg_gen_us,
+            avg_mesh_us: self.avg_mesh_us,
+        }
+    }
+
     fn worker_thread(
         task_rx: Arc<Mutex<Receiver<Task>>>,
         result_tx: Sender<TaskResult>,
@@ -297,12 +328,16 @@ impl ChunkManager {
 
             let result = match task {
                 Task::GenerateChunk { coord } => {
+                    let start = Instant::now();
                     let chunk = generator.generate_chunk(coord);
-                    TaskResult::ChunkGenerated { coord, chunk }
+                    let duration = start.elapsed();
+                    TaskResult::ChunkGenerated { coord, chunk, duration }
                 },
                 Task::MeshChunk { coord, chunk } => {
+                    let start = Instant::now();
                     let mesh = ChunkMesher::create_mesh(&chunk, coord);
-                    TaskResult::ChunkMeshed { coord, mesh }
+                    let duration = start.elapsed();
+                    TaskResult::ChunkMeshed { coord, mesh, duration }
                 }
             };
 
@@ -329,9 +364,11 @@ pub enum TaskResult {
     ChunkGenerated {
         coord: ChunkCoord,
         chunk: Chunk,
+        duration: Duration,
     },
     ChunkMeshed {
         coord: ChunkCoord,
-        mesh: CpuMesh
+        mesh: CpuMesh,
+        duration: Duration,
     }
 }

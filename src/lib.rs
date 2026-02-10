@@ -81,9 +81,9 @@ impl ApplicationHandler<RenderState> for App {
                 let events = self.world_state.poll_events();
                 state.process(events);
                 // let render_scene = self.world_state.collect_render_data();
-                let debug_enabled = self.world_state.is_debug_enabled();
+                // let debug_enabled = self.world_state.is_debug_enabled();
                 self.input_state.mouse_delta = (0.0, 0.0);
-                match state.render(debug_enabled) {
+                match state.render(&self.world_state) {
                     Ok(_) => {},
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
                         let size = state.window.inner_size();
