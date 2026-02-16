@@ -1,9 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::{collections::HashSet, sync::Arc};
 
-use rand::Rng;
 use winit::keyboard::KeyCode;
 
-use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord, WorldCoord}, generator::WorldGenerator, meshing::{ChunkManager, ChunkMesher}, player::Player}, input::Input, render::{mesh::CpuMesh, renderers::debug_text::ChunkStats, scene::RenderScene}};
+use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord, WorldCoord}, generator::WorldGenerator, meshing::{ChunkManager, ChunkMesher}, player::Player, registry::{BlockRegistry, Configuration}}, input::Input, render::{assets::Assets, material::MaterialHandle, mesh::CpuMesh, renderers::debug_text::ChunkStats, scene::RenderScene}};
 
 pub struct WorldState {
     pub time: f32,
@@ -18,7 +17,12 @@ pub struct WorldState {
 
 #[derive(Default)]
 pub struct FrameEvent {
+    pub render_events: Vec<RenderEvent>,
     pub chunk_events: Vec<ChunkEvent>,
+}
+
+pub enum RenderEvent {
+    ChunkMaterialChanged { handle: MaterialHandle }
 }
 
 pub enum ChunkEvent {
@@ -28,8 +32,8 @@ pub enum ChunkEvent {
 }
 
 impl WorldState {
-    const RENDER_DISTANCE: isize = 4;
-    pub fn new() -> Self {
+    const RENDER_DISTANCE: isize = 8;
+    pub async fn new(assets: &mut Assets) -> Self {
         let camera = CameraState {
             position: (8.0, 5.0, 25.0).into(),
             yaw: -std::f32::consts::FRAC_PI_2, // -90 degrees, points towards -Z
@@ -40,7 +44,16 @@ impl WorldState {
             zfar: 1000.0,
         };
 
-        let chunk_manager = ChunkManager::new();
+        let config_str = Assets::load_string("blocks.toml").await.unwrap();
+        let registry = BlockRegistry::from_str(&config_str, assets);
+        let file_names = registry.unique_paths().iter().map(|s| s.as_str()).collect::<Vec<_>>();
+        let texture_array = assets.load_texture_array(&file_names).await.unwrap();
+        let material = assets.load_material(texture_array).await.unwrap();
+        let registry = Arc::new(registry);
+
+        let render_events = vec![RenderEvent::ChunkMaterialChanged { handle: material }];
+
+        let chunk_manager = ChunkManager::new(registry);
 
         let player = Player::new();
 
@@ -49,7 +62,7 @@ impl WorldState {
             camera,
             chunk_manager,
             player,
-            frame_event: FrameEvent { chunk_events: Vec::new() },
+            frame_event: FrameEvent { chunk_events: Vec::new(), render_events },
 
             debug_enabled: false,
         }

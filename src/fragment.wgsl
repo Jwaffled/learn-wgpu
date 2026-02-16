@@ -1,9 +1,16 @@
 @group(1) @binding(0)
-var t_diffuse: texture_2d<f32>;
+var block_textures: texture_2d_array<f32>;
 @group(1) @binding(1)
-var s_diffuse: sampler;
+var block_sampler: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
-    return textureSample(t_diffuse, s_diffuse, in.tex_coords);
+    let color = textureSample(
+        block_textures,
+        block_sampler,
+        in.tex_coords,
+        i32(in.texture_index),
+    );
+
+    return color;
 }

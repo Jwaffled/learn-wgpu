@@ -19,6 +19,8 @@ rand = "0.9.2"
 tobj = { version = "3.2", default-features = false, features = ["async"]}
 libnoise = { version = "1.2.0", features = [ "image" ] }
 glyphon = "0.10.0"
+serde = { version = "1.0.228", features = ["derive"]}
+toml = "0.9.12"
 
 [dependencies.image]
 version = "0.24"
@@ -33,3 +35,6 @@ glob = "0.3"
 [[bin]]
 name = "learn-wgpu"
 path = "src/main.rs"
+
+[profile.release]
+debug = true

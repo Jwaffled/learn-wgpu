@@ -1,20 +1,29 @@
 use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex, mpsc::{self, Receiver, Sender}}, thread, time::{Duration, Instant}};
 
-use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord}, generator::WorldGenerator, player::Player, world::{ChunkEvent, FrameEvent, WorldState}}, render::{mesh::CpuMesh, renderers::debug_text::ChunkStats, vertex::Vertex}};
+use crate::{game::{chunk::{Block, BlockFace, Chunk, ChunkCoord, LocalCoord}, generator::WorldGenerator, player::Player, registry::BlockRegistry, world::{ChunkEvent, FrameEvent, WorldState}}, render::{mesh::CpuMesh, renderers::debug_text::ChunkStats, vertex::Vertex}};
 
 pub struct ChunkMesher {
 
 }
 
+const QUAD_UVS: [[f32; 2]; 4] = [
+    [0.0, 0.0],
+    [1.0, 0.0],
+    [1.0, 1.0],
+    [0.0, 1.0],
+];
 struct Face {
+    direction: BlockFace,
     normal: [f32; 3],
     corners: [[f32; 3]; 4],
-    neighbor_offset: (isize, isize, isize)
+    neighbor_offset: (isize, isize, isize),
+    uv_indices: [usize; 4],
 }
 
 const FACES: [Face; 6] = [
-    // +X
+    // +X (East)
     Face {
+        direction: BlockFace::East,
         normal: [1.0, 0.0, 0.0],
         neighbor_offset: (1, 0, 0),
         corners: [
@@ -23,9 +32,12 @@ const FACES: [Face; 6] = [
             [1.0, 1.0, 1.0],
             [1.0, 0.0, 1.0],
         ],
+        uv_indices: [1, 2, 3, 0],
     },
-    // -X
+
+    // -X (West)
     Face {
+        direction: BlockFace::West,
         normal: [-1.0, 0.0, 0.0],
         neighbor_offset: (-1, 0, 0),
         corners: [
@@ -34,9 +46,12 @@ const FACES: [Face; 6] = [
             [0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0],
         ],
+        uv_indices: [0, 3, 2, 1],
     },
-    // +Y
+
+    // +Y (Top)
     Face {
+        direction: BlockFace::Top,
         normal: [0.0, 1.0, 0.0],
         neighbor_offset: (0, 1, 0),
         corners: [
@@ -45,9 +60,12 @@ const FACES: [Face; 6] = [
             [1.0, 1.0, 0.0],
             [0.0, 1.0, 0.0],
         ],
+        uv_indices: [0, 1, 2, 3],
     },
-    // -Y
+
+    // -Y (Bottom)
     Face {
+        direction: BlockFace::Bottom,
         normal: [0.0, -1.0, 0.0],
         neighbor_offset: (0, -1, 0),
         corners: [
@@ -56,9 +74,12 @@ const FACES: [Face; 6] = [
             [1.0, 0.0, 1.0],
             [0.0, 0.0, 1.0],
         ],
+        uv_indices: [3, 2, 1, 0],
     },
-    // +Z
+
+    // +Z (North)
     Face {
+        direction: BlockFace::North,
         normal: [0.0, 0.0, 1.0],
         neighbor_offset: (0, 0, 1),
         corners: [
@@ -67,9 +88,12 @@ const FACES: [Face; 6] = [
             [1.0, 1.0, 1.0],
             [0.0, 1.0, 1.0],
         ],
+        uv_indices: [0, 1, 2, 3],
     },
-    // -Z
+
+    // -Z (South)
     Face {
+        direction: BlockFace::South,
         normal: [0.0, 0.0, -1.0],
         neighbor_offset: (0, 0, -1),
         corners: [
@@ -78,11 +102,13 @@ const FACES: [Face; 6] = [
             [0.0, 1.0, 0.0],
             [1.0, 1.0, 0.0],
         ],
+        uv_indices: [1, 0, 3, 2],
     },
 ];
 
+
 impl ChunkMesher {
-    pub fn create_mesh(chunk: &Chunk, chunk_coord: ChunkCoord) -> CpuMesh {
+    pub fn create_mesh(chunk: &Chunk, chunk_coord: ChunkCoord, registry: &BlockRegistry) -> CpuMesh {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
@@ -118,24 +144,30 @@ impl ChunkMesher {
                         let base_index = vertices.len() as u32;
 
                         let (uv_min, uv_max) = block.get_tile().uv_rect();
-
-                        let uvs = [
-                            [uv_min[0], uv_min[1]],
-                            [uv_max[0], uv_min[1]],
-                            [uv_max[0], uv_max[1]],
-                            [uv_min[0], uv_max[1]]
-                        ];
+                        let def = registry.get(block);
+                        let texture_index = match face.direction {
+                            BlockFace::Bottom => def.textures.bottom,
+                            BlockFace::East => def.textures.east,
+                            BlockFace::North => def.textures.north,
+                            BlockFace::South => def.textures.south,
+                            BlockFace::Top => def.textures.top,
+                            BlockFace::West => def.textures.west,
+                        };
 
                         for (i, corner) in face.corners.iter().enumerate() {
-                            
+                            let uv = QUAD_UVS[face.uv_indices[i]];
                             vertices.push(Vertex {
                                 position: [
                                     (x + chunk_offset_x) as f32 + corner[0],
                                     (y + chunk_offset_y) as f32 + corner[1],
                                     (z + chunk_offset_z) as f32 + corner[2],
                                 ],
-                                tex_coords: uvs[i],
-                                normal: face.normal
+                                tex_coords: [
+                                    uv_min[0] + uv[0] * (uv_max[0] - uv_min[0]),
+                                    uv_min[1] + (1.0 - uv[1]) * (uv_max[1] - uv_min[1]),
+                                ],
+                                normal: face.normal,
+                                texture_index: texture_index,
                             });
                         }
 
@@ -157,56 +189,10 @@ impl ChunkMesher {
             indices
         }
     }
-
-    pub fn create_player_mesh(player: &Player) -> CpuMesh {
-        let mut vertices = Vec::new();
-        let mut indices = Vec::new();
-
-        let size = 0.6;
-
-        let px = player.position.x;
-        let py = player.position.y;
-        let pz = player.position.z;
-
-        let (uv_min, uv_max) = Block::Dirt.get_tile().uv_rect();
-        let uvs = [
-            [uv_min[0], uv_min[1]],
-            [uv_max[0], uv_min[1]],
-            [uv_max[0], uv_max[1]],
-            [uv_min[0], uv_max[1]],
-        ];
-
-        for face in &FACES {
-            let base_index = vertices.len() as u32;
-
-            for (i, corner) in face.corners.iter().enumerate() {
-                let x = (corner[0] - 0.5) * size + px;
-                let y = (corner[1] - 0.5) * size + py;
-                let z = (corner[2] - 0.5) * size + pz;
-
-                vertices.push(Vertex {
-                    position: [x, y, z],
-                    tex_coords: uvs[i],
-                    normal: face.normal,
-                });
-            }
-
-            indices.extend_from_slice(&[
-                base_index,
-                base_index + 1,
-                base_index + 2,
-                base_index,
-                base_index + 2,
-                base_index + 3,
-            ]);
-        }
-
-        CpuMesh { vertices, indices }
-    }
 }
 
 pub struct ChunkManager {
-    chunks: HashMap<ChunkCoord, Chunk>,
+    chunks: HashMap<ChunkCoord, Arc<Chunk>>,
     in_flight: HashSet<ChunkCoord>,
     task_tx: Sender<Task>,
     result_rx: Receiver<TaskResult>,
@@ -221,7 +207,7 @@ pub struct ChunkManager {
 
 impl ChunkManager {
     const NUM_WORKERS: u8 = 2;
-    pub fn new() -> Self {
+    pub fn new(registry: Arc<BlockRegistry>) -> Self {
         let chunks = HashMap::new();
         let in_flight = HashSet::new();
         let generator = WorldGenerator::new(42);
@@ -233,8 +219,9 @@ impl ChunkManager {
             let thread_rx = Arc::clone(&task_rx);
             let thread_result_tx = result_tx.clone();
             let thread_world_generator = generator.clone();
+            let thread_registry = registry.clone();
             thread::spawn(move || {
-                Self::worker_thread(thread_rx, thread_result_tx, thread_world_generator);
+                Self::worker_thread(thread_rx, thread_result_tx, thread_world_generator, thread_registry);
             });
         }
 
@@ -255,6 +242,7 @@ impl ChunkManager {
         while let Ok(result) = self.result_rx.try_recv() {
             match result {
                 TaskResult::ChunkGenerated { coord, chunk, duration } => {
+                    let chunk = Arc::new(chunk);
                     self.chunks.insert(coord, chunk.clone());
                     self.in_flight.remove(&coord);
 
@@ -315,7 +303,8 @@ impl ChunkManager {
     fn worker_thread(
         task_rx: Arc<Mutex<Receiver<Task>>>,
         result_tx: Sender<TaskResult>,
-        generator: WorldGenerator
+        generator: WorldGenerator,
+        registry: Arc<BlockRegistry>,
     ) {
         loop {
             let task = {
@@ -335,7 +324,7 @@ impl ChunkManager {
                 },
                 Task::MeshChunk { coord, chunk } => {
                     let start = Instant::now();
-                    let mesh = ChunkMesher::create_mesh(&chunk, coord);
+                    let mesh = ChunkMesher::create_mesh(&chunk, coord, &registry);
                     let duration = start.elapsed();
                     TaskResult::ChunkMeshed { coord, mesh, duration }
                 }
@@ -355,7 +344,7 @@ pub enum Task {
     },
     MeshChunk {
         coord: ChunkCoord,
-        chunk: Chunk
+        chunk: Arc<Chunk>
     }
 }
 

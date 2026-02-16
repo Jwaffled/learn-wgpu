@@ -1,8 +1,13 @@
-use std::{collections::HashMap, io::{BufReader, Cursor}};
+use std::{collections::HashMap, io::{BufReader, Cursor}, sync::Arc};
 
 use crate::render::{material::{Material, MaterialHandle}, mesh::{Mesh, MeshHandle}, model::{Model, ModelHandle, SubMesh}, state::PipelineLayouts, texture::{Texture, TextureHandle}, vertex::Vertex};
 
 pub struct Assets {
+    device: Arc<wgpu::Device>,
+    queue: Arc<wgpu::Queue>,
+
+    material_layout: wgpu::BindGroupLayout,
+
     meshes: HashMap<MeshHandle, Mesh>,
     materials: HashMap<MaterialHandle, Material>,
     textures: HashMap<TextureHandle, Texture>,
@@ -15,34 +20,62 @@ pub struct Assets {
 }
 
 impl Assets {
-    pub fn new(device: &wgpu::Device, queue: &wgpu::Queue, layouts: &PipelineLayouts) -> Self {
+    pub fn new(device: Arc<wgpu::Device>, queue: Arc<wgpu::Queue>) -> Self {
         let meshes = HashMap::from([
-            (MeshHandle(0), Mesh::cube(device))
+            // (MeshHandle(0), Mesh::cube(device))
         ]);
 
-        let default_texture = Texture::from_rgba(device, queue, [255, 255, 255, 255], "Default texture").unwrap();
+        // let default_texture = Texture::from_rgba(device, queue, [255, 255, 255, 255], "Default texture").unwrap();
 
         let textures = HashMap::from([
-            (TextureHandle::DEFAULT_TEXTURE, default_texture)
+            // (TextureHandle::DEFAULT_TEXTURE, default_texture)
         ]);
 
         let materials = HashMap::from([
-            (MaterialHandle::DEFAULT_MATERIAL, Material::new(&textures.get(&TextureHandle::DEFAULT_TEXTURE).unwrap(), device, &layouts.material))
+            // (MaterialHandle::DEFAULT_MATERIAL, Material::new(&textures.get(&TextureHandle::DEFAULT_TEXTURE).unwrap(), device, &layouts.material))
         ]);
 
         
 
         let models = HashMap::from([]);
 
+        let material_layout = device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Material Bind Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Texture {
+                            sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                            multisampled: false,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
+                        },
+                        count: None,
+                    },
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 1,
+                        visibility: wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                        count: None,
+                    }
+                ]
+            }
+        );
+
         Self {
+            device,
+            queue,
+            material_layout,
+
             meshes,
             materials,
             textures,
             models,
 
-            next_mesh_handle: MeshHandle(1),
-            next_material_handle: MaterialHandle(1),
-            next_texture_handle: TextureHandle(1),
+            next_mesh_handle: MeshHandle(0),
+            next_material_handle: MaterialHandle(0),
+            next_texture_handle: TextureHandle(0),
             next_model_handle: ModelHandle(0),
         }
     }
@@ -73,96 +106,112 @@ impl Assets {
         Ok(handle)
     }
 
-    pub async fn load_material(&mut self, texture: TextureHandle, device: &wgpu::Device, material_layout: &wgpu::BindGroupLayout) -> anyhow::Result<MaterialHandle> {
-        let material = Material::new(&self.textures[&texture], device, &material_layout);
+    pub async fn load_texture_array(&mut self, file_names: &[&str]) -> anyhow::Result<TextureHandle> {
+        let mut images = vec![];
+        for file in file_names {
+            let bytes = Self::load_binary(file).await?;
+            let image = image::load_from_memory(&bytes)?;
+            images.push(image);
+        }
+
+        let texture = Texture::texture_array_from_images(&self.device, &self.queue, &images, "Texture Array")?;
+        let handle = self.next_texture_handle;
+        self.next_texture_handle.0 += 1;
+
+        self.textures.insert(handle, texture);
+        Ok(handle)
+    }
+
+    pub async fn load_material(&mut self, texture: TextureHandle) -> anyhow::Result<MaterialHandle> {
+        let material = Material::new(&self.textures[&texture], &self.device, &self.material_layout);
         let handle = self.next_material_handle;
         self.next_material_handle.0 += 1;
         self.materials.insert(handle, material);
         Ok(handle)
     }
 
-    pub async fn load_model(&mut self, file_name: &str, device: &wgpu::Device, queue: &wgpu::Queue, material_layout: &wgpu::BindGroupLayout) -> anyhow::Result<ModelHandle> {
-        let obj_text = Self::load_string(file_name).await?;
-        let obj_cursor = Cursor::new(obj_text);
-        let mut obj_reader = BufReader::new(obj_cursor);
+    // pub async fn load_model(&mut self, file_name: &str, device: &wgpu::Device, queue: &wgpu::Queue, material_layout: &wgpu::BindGroupLayout) -> anyhow::Result<ModelHandle> {
+    //     let obj_text = Self::load_string(file_name).await?;
+    //     let obj_cursor = Cursor::new(obj_text);
+    //     let mut obj_reader = BufReader::new(obj_cursor);
 
-        let (models, obj_materials) = tobj::load_obj_buf_async(
-            &mut obj_reader,
-            &tobj::LoadOptions {
-                triangulate: true,
-                single_index: true,
-                ..Default::default()
-            },
-            |p| async move {
-                let mat_text = Self::load_string(&p).await.unwrap();
-                tobj::load_mtl_buf(&mut BufReader::new(Cursor::new(mat_text)))
-            }
-        )
-        .await?;
+    //     let (models, obj_materials) = tobj::load_obj_buf_async(
+    //         &mut obj_reader,
+    //         &tobj::LoadOptions {
+    //             triangulate: true,
+    //             single_index: true,
+    //             ..Default::default()
+    //         },
+    //         |p| async move {
+    //             let mat_text = Self::load_string(&p).await.unwrap();
+    //             tobj::load_mtl_buf(&mut BufReader::new(Cursor::new(mat_text)))
+    //         }
+    //     )
+    //     .await?;
 
-        let mut materials = Vec::new();
-        for m in obj_materials? {
-            let diffuse_texture = self.load_texture(&m.diffuse_texture, device, queue).await?;
-            let material_handle = self.load_material(diffuse_texture, device, material_layout).await?;
-            materials.push(material_handle);
-        }
+    //     let mut materials = Vec::new();
+    //     for m in obj_materials? {
+    //         let diffuse_texture = self.load_texture(&m.diffuse_texture, device, queue).await?;
+    //         let material_handle = self.load_material(diffuse_texture, device, material_layout).await?;
+    //         materials.push(material_handle);
+    //     }
 
         
-        let mut parts = Vec::new();
+    //     let mut parts = Vec::new();
 
-        for m in models {
-            let vertices = (0..m.mesh.positions.len() / 3)
-                .map(|i| {
-                    if m.mesh.normals.is_empty() {
-                        Vertex {
-                            position: [
-                                m.mesh.positions[i * 3],
-                                m.mesh.positions[i * 3 + 1],
-                                m.mesh.positions[i * 3 + 2]
-                            ],
-                            tex_coords: [m.mesh.texcoords[i * 2], 1.0 - m.mesh.texcoords[i * 2 + 1]],
-                            normal: [0.0, 0.0, 0.0]
-                        }
-                    } else {
-                        Vertex {
-                            position: [
-                                m.mesh.positions[i * 3],
-                                m.mesh.positions[i * 3 + 1],
-                                m.mesh.positions[i * 3 + 2]
-                            ],
-                            tex_coords: [m.mesh.texcoords[i * 2], 1.0 - m.mesh.texcoords[i * 2 + 1]],
-                            normal: [
-                                m.mesh.normals[i * 3],
-                                m.mesh.normals[i * 3 + 1],
-                                m.mesh.normals[i * 3 + 2]
-                            ],
-                        }
-                    }
-                })
-                .collect::<Vec<_>>();
-            let mesh = Mesh::from_vertices_indices(&vertices, &m.mesh.indices, device);
-            let handle = self.next_mesh_handle;
-            self.next_mesh_handle.0 += 1;
-            self.meshes.insert(handle, mesh);
-            let material_handle = match m.mesh.material_id {
-                Some(id) if id < materials.len() => materials[id],
-                _ => MaterialHandle::DEFAULT_MATERIAL
-            };
+    //     for m in models {
+    //         let vertices = (0..m.mesh.positions.len() / 3)
+    //             .map(|i| {
+    //                 if m.mesh.normals.is_empty() {
+    //                     Vertex {
+    //                         position: [
+    //                             m.mesh.positions[i * 3],
+    //                             m.mesh.positions[i * 3 + 1],
+    //                             m.mesh.positions[i * 3 + 2]
+    //                         ],
+    //                         tex_coords: [m.mesh.texcoords[i * 2], 1.0 - m.mesh.texcoords[i * 2 + 1]],
+    //                         normal: [0.0, 0.0, 0.0]
+    //                     }
+    //                 } else {
+    //                     Vertex {
+    //                         position: [
+    //                             m.mesh.positions[i * 3],
+    //                             m.mesh.positions[i * 3 + 1],
+    //                             m.mesh.positions[i * 3 + 2]
+    //                         ],
+    //                         tex_coords: [m.mesh.texcoords[i * 2], 1.0 - m.mesh.texcoords[i * 2 + 1]],
+    //                         normal: [
+    //                             m.mesh.normals[i * 3],
+    //                             m.mesh.normals[i * 3 + 1],
+    //                             m.mesh.normals[i * 3 + 2]
+    //                         ],
+    //                     }
+    //                 }
+    //             })
+    //             .collect::<Vec<_>>();
+    //         let mesh = Mesh::from_vertices_indices(&vertices, &m.mesh.indices, device);
+    //         let handle = self.next_mesh_handle;
+    //         self.next_mesh_handle.0 += 1;
+    //         self.meshes.insert(handle, mesh);
+    //         let material_handle = match m.mesh.material_id {
+    //             Some(id) if id < materials.len() => materials[id],
+    //             _ => MaterialHandle::DEFAULT_MATERIAL
+    //         };
 
-            parts.push(SubMesh {
-                mesh: handle,
-                material: material_handle
-            })
-        }
+    //         parts.push(SubMesh {
+    //             mesh: handle,
+    //             material: material_handle
+    //         })
+    //     }
 
-        let model_handle = self.next_model_handle;
-        self.next_model_handle.0 += 1;
-        self.models.insert(model_handle, Model { parts });
+    //     let model_handle = self.next_model_handle;
+    //     self.next_model_handle.0 += 1;
+    //     self.models.insert(model_handle, Model { parts });
 
-        Ok(model_handle)
-    }
+    //     Ok(model_handle)
+    // }
 
-    async fn load_string(file_name: &str) -> anyhow::Result<String> {
+    pub async fn load_string(file_name: &str) -> anyhow::Result<String> {
         let txt = {
             let path = std::path::Path::new(env!("OUT_DIR"))
                 .join("res")
@@ -174,7 +223,7 @@ impl Assets {
         Ok(txt)
     }
 
-    async fn load_binary(file_name: &str) -> anyhow::Result<Vec<u8>> {
+    pub async fn load_binary(file_name: &str) -> anyhow::Result<Vec<u8>> {
         let data = {
             let path = std::path::Path::new(env!("OUT_DIR"))
                 .join("res")

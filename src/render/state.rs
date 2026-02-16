@@ -4,7 +4,7 @@ use glyphon::{Resolution, Viewport};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::{game::world::{ChunkEvent, FrameEvent, WorldState}, render::{assets::Assets, material::MaterialHandle, mesh::{CpuMesh, Mesh, MeshHandle}, model::{DrawModel, ModelHandle}, renderers::{chunk::ChunkRenderer, debug::DebugRenderer, debug_text::{DebugStats, DebugTextRenderer, FrameStats}}, scene::RenderScene, texture, uniforms::CameraUniform, vertex::{DebugVertex, Vertex}}};
+use crate::{game::world::{ChunkEvent, FrameEvent, RenderEvent, WorldState}, render::{assets::Assets, material::MaterialHandle, mesh::{CpuMesh, Mesh, MeshHandle}, model::{DrawModel, ModelHandle}, renderers::{chunk::ChunkRenderer, debug::DebugRenderer, debug_text::{DebugStats, DebugTextRenderer, FrameStats}}, scene::RenderScene, texture, uniforms::CameraUniform, vertex::{DebugVertex, Vertex}}};
 
 pub struct PipelineLayouts {
     pub camera: wgpu::BindGroupLayout,
@@ -44,7 +44,7 @@ impl PipelineLayouts {
                         ty: wgpu::BindingType::Texture {
                             sample_type: wgpu::TextureSampleType::Float { filterable: true },
                             multisampled: false,
-                            view_dimension: wgpu::TextureViewDimension::D2,
+                            view_dimension: wgpu::TextureViewDimension::D2Array,
                         },
                         count: None,
                     },
@@ -69,8 +69,8 @@ pub struct RenderState {
     instance: wgpu::Instance,
     adapter: wgpu::Adapter,
     surface: wgpu::Surface<'static>,
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    pub device: Arc<wgpu::Device>,
+    pub queue: Arc<wgpu::Queue>,
     config: wgpu::SurfaceConfiguration,
     viewport: glyphon::Viewport,
     pub window: Arc<Window>,
@@ -80,14 +80,12 @@ pub struct RenderState {
     debug_text_renderer: DebugTextRenderer,
     pipeline_layouts: PipelineLayouts,
 
-    assets: Assets,
-
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
 
     depth_texture: texture::Texture,
-    block_material: MaterialHandle,
+    chunk_material: Option<MaterialHandle>,
 
     // Stats
     last_frame_time: Instant,
@@ -118,13 +116,16 @@ impl RenderState {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::empty(),
+                required_features: wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 required_limits: wgpu::Limits::default(),
                 memory_hints: Default::default(),
                 trace: wgpu::Trace::Off,
             })
             .await?;
+
+        let device = Arc::new(device);
+        let queue = Arc::new(queue);
 
         let surface_caps = surface.get_capabilities(&adapter);
 
@@ -185,11 +186,6 @@ impl RenderState {
             }
         );
 
-        let mut assets = Assets::new(&device, &queue, &pipeline_layouts);
-
-        let atlas = assets.load_texture("spritesheet_tiles.png", &device, &queue).await?;
-        let block_material = assets.load_material(atlas, &device, &pipeline_layouts.material).await?;
-
         let depth_texture = texture::Texture::create_depth_texture(&device, &config, "Depth Texture");
 
         let chunk_renderer = ChunkRenderer::new(
@@ -208,7 +204,7 @@ impl RenderState {
             &debug_shader
         );
 
-        let mut debug_text_renderer = DebugTextRenderer::new(
+        let debug_text_renderer = DebugTextRenderer::new(
             &device,
             &queue,
             &text_cache,
@@ -236,14 +232,13 @@ impl RenderState {
             chunk_renderer,
             debug_renderer,
             debug_text_renderer,
-            assets,
 
             camera_uniform,
             camera_buffer,
             camera_bind_group,
 
             depth_texture,
-            block_material,
+            chunk_material: None,
 
             // Stats
             last_frame_time,
@@ -269,6 +264,14 @@ impl RenderState {
     }
 
     pub fn process(&mut self, event: FrameEvent) {
+        for event in event.render_events {
+            match event {
+                RenderEvent::ChunkMaterialChanged { handle } => {
+                    self.chunk_material = Some(handle);
+                }
+            }
+        }
+
         for event in event.chunk_events {
             match event {
                 ChunkEvent::ChunkLoaded { coord, mesh } => {
@@ -284,10 +287,10 @@ impl RenderState {
         }
     }
 
-    pub fn render(&mut self, world: &WorldState) -> Result<(), wgpu::SurfaceError> {
+    pub fn render(&mut self, world: &WorldState, assets: &Assets) -> Result<(), wgpu::SurfaceError> {
         self.window.request_redraw();
 
-        if !self.is_surface_configured {
+        if !self.is_surface_configured || self.chunk_material.is_none() {
             return Ok(());
         }
 
@@ -298,7 +301,7 @@ impl RenderState {
             label: Some("Render Encoder")
         });
 
-        let block_material = self.assets.get_material(self.block_material);
+        let block_material = assets.get_material(self.chunk_material.unwrap());
         self.debug_text_renderer.update_text(
             DebugStats {
                 chunk: world.chunk_stats(),

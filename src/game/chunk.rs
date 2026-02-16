@@ -64,6 +64,28 @@ impl Chunk {
     }
 }
 
+
+#[derive(Copy, Clone)]
+pub struct BlockTextures {
+    pub top: u32,
+    pub bottom: u32,
+    pub north: u32,
+    pub south: u32,
+    pub east: u32,
+    pub west: u32,
+}
+
+#[derive(Copy, Clone)]
+pub enum BlockFace {
+    Top,
+    Bottom,
+    North,
+    South,
+    East,
+    West,
+}
+
+
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum Block {
     #[default]
@@ -92,17 +114,7 @@ pub struct Tile {
 
 impl Tile {
     pub fn uv_rect(&self) -> ([f32; 2], [f32; 2]) {
-        const ATLAS_WIDTH: f32 = 1152.0;
-        const ATLAS_HEIGHT: f32 = 1280.0;
-        const TILE_SIZE: f32 = 128.0;
-
-        let u_min = self.x as f32 * TILE_SIZE / ATLAS_WIDTH;
-        let v_min = self.y as f32 * TILE_SIZE / ATLAS_HEIGHT;
-
-        let u_max = (self.x as f32 * TILE_SIZE + TILE_SIZE) / ATLAS_WIDTH;
-        let v_max = (self.y as f32 * TILE_SIZE + TILE_SIZE) / ATLAS_HEIGHT;
-
-        ([u_min, v_min], [u_max, v_max])
+        ([0.0, 0.0], [1.0, 1.0])
     }
 }
 

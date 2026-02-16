@@ -4,6 +4,7 @@ use libnoise::Source;
 use libnoise::prelude::*;
 use winit::{application::ApplicationHandler, event::{DeviceEvent, Event, KeyEvent, WindowEvent}, event_loop::{ActiveEventLoop, EventLoop}, keyboard::{KeyCode, PhysicalKey}, window::Window};
 
+use crate::render::assets::Assets;
 use crate::{game::world::WorldState, input::Input, render::state::RenderState};
 
 mod game;
@@ -11,8 +12,9 @@ mod render;
 mod input;
 
 pub struct App {
-    world_state: WorldState,
+    world_state: Option<WorldState>,
     render_state: Option<RenderState>,
+    asset_manager: Option<Assets>,
     window: Option<Arc<Window>>,
     cursor_visible: bool,
     input_state: Input,
@@ -24,11 +26,13 @@ impl App {
         // Visualizer::<2>::new([100, 100], &noise)
         //     .write_to_file("image-test.png")
         //     .unwrap();
-        let mut world_state = WorldState::new();
-        world_state.generate_chunks();
+        // let mut world_state = WorldState::new();
+        let world_state = None;
+        // world_state.generate_chunks();
         Self {
             world_state,
             render_state: None,
+            asset_manager: None,
             window: None,
             cursor_visible: true,
             input_state: Input::new()
@@ -46,7 +50,12 @@ impl ApplicationHandler<RenderState> for App {
             .unwrap();
         self.window = Some(window.clone());
         self.cursor_visible = false;
-        self.render_state = Some(pollster::block_on(RenderState::new(window)).unwrap());
+        let render_state = pollster::block_on(RenderState::new(window)).unwrap();
+        let mut asset_manager = Assets::new(render_state.device.clone(), render_state.queue.clone());
+        let world_state = pollster::block_on(WorldState::new(&mut asset_manager));
+        self.world_state = Some(world_state);
+        self.asset_manager = Some(asset_manager);
+        self.render_state = Some(render_state);
     }
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: RenderState) {
@@ -59,8 +68,13 @@ impl ApplicationHandler<RenderState> for App {
             window_id: winit::window::WindowId,
             event: winit::event::WindowEvent,
         ) {
-        let state = match &mut self.render_state {
+        let render_state = match &mut self.render_state {
             Some(canvas) => canvas,
+            None => return
+        };
+
+        let world_state = match &mut self.world_state {
+            Some(state) => state,
             None => return
         };
 
@@ -69,25 +83,30 @@ impl ApplicationHandler<RenderState> for App {
             None => return
         };
 
+        let asset_manager = match &self.asset_manager {
+            Some(asset_manager) => asset_manager,
+            None => return
+        };
+
         match event {
             WindowEvent::CloseRequested => event_loop.exit(),
             WindowEvent::Resized(size) => {
-                state.resize(size.width, size.height);
-                self.world_state.resize(size.width, size.height);
+                render_state.resize(size.width, size.height);
+                world_state.resize(size.width, size.height);
             },
             WindowEvent::RedrawRequested => {
-                self.world_state.update(0.01, &self.input_state);
-                state.update(&self.world_state);
-                let events = self.world_state.poll_events();
-                state.process(events);
+                world_state.update(0.01, &self.input_state);
+                render_state.update(world_state);
+                let events = world_state.poll_events();
+                render_state.process(events);
                 // let render_scene = self.world_state.collect_render_data();
                 // let debug_enabled = self.world_state.is_debug_enabled();
                 self.input_state.mouse_delta = (0.0, 0.0);
-                match state.render(&self.world_state) {
+                match render_state.render(world_state, asset_manager) {
                     Ok(_) => {},
                     Err(wgpu::SurfaceError::Lost | wgpu::SurfaceError::Outdated) => {
-                        let size = state.window.inner_size();
-                        state.resize(size.width, size.height);
+                        let size = render_state.window.inner_size();
+                        render_state.resize(size.width, size.height);
                     }
                     Err(e) => {
                         log::error!("Unable to render {}", e);

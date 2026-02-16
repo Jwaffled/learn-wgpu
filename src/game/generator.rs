@@ -25,7 +25,12 @@ impl WorldGenerator {
 
                 let height = self.height_at(world_x, world_z);
                 for y in 0..Chunk::CHUNK_HEIGHT {
-                    if y as isize <= height {
+                    if y as isize == height {
+                        chunk.set_block(
+                            LocalCoord { x, y, z },
+                            Block::Water,
+                        );
+                    } else if (y as isize) < height {
                         chunk.set_block(
                             LocalCoord { x, y, z },
                             Block::Stone,

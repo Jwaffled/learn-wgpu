@@ -2,11 +2,13 @@ struct VertexInput {
     @location(0) position: vec3<f32>,
     @location(1) tex_coords: vec2<f32>,
     @location(2) normal: vec3<f32>,
+    @location(3) texture_index: u32,
 }
 
 struct VertexOutput {
     @builtin(position) clip_position: vec4<f32>,
     @location(0) tex_coords: vec2<f32>,
+    @location(1) texture_index: u32,
 }
 
 struct CameraUniform {
@@ -23,5 +25,6 @@ fn vs_main(
     var out: VertexOutput;
     out.clip_position = camera.view_proj * vec4<f32>(in.position, 1.0);
     out.tex_coords = in.tex_coords;
+    out.texture_index = in.texture_index;
     return out;
 }
