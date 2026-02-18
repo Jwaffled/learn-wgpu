@@ -16,7 +16,6 @@ impl WorldGenerator {
     }
 
     pub fn generate_chunk(&self, coord: ChunkCoord) -> Chunk {
-        println!("Generating chunk @ {:?}", coord);
         let mut chunk = Chunk::empty();
         for x in 0..Chunk::CHUNK_SIZE {
             for z in 0..Chunk::CHUNK_SIZE {
@@ -24,7 +23,7 @@ impl WorldGenerator {
                 let world_z = coord.z * Chunk::CHUNK_SIZE as isize + z as isize;
 
                 let height = self.height_at(world_x, world_z);
-                for y in 0..Chunk::CHUNK_HEIGHT {
+                for y in 0..Chunk::CHUNK_SIZE {
                     if y as isize == height {
                         chunk.set_block(
                             LocalCoord { x, y, z },
@@ -45,6 +44,6 @@ impl WorldGenerator {
 
     fn height_at(&self, x: isize, z: isize) -> isize {
         let n = self.generator.sample([x as f64, z as f64]);
-        ((n + 1.0) * 0.5 * 20.0) as isize + 20
+        ((n + 1.0) * 0.5 * 16.0) as isize + 2
     }
 }

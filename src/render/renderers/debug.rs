@@ -126,13 +126,13 @@ impl DebugRenderer {
 
         let min = [
             (cx * Chunk::CHUNK_SIZE as isize) as f32,
-            (cy * Chunk::CHUNK_HEIGHT as isize) as f32,
+            (cy * Chunk::CHUNK_SIZE as isize) as f32,
             (cz * Chunk::CHUNK_SIZE as isize) as f32,
         ];
 
         let max = [
             min[0] + Chunk::CHUNK_SIZE as f32,
-            min[1] + Chunk::CHUNK_HEIGHT as f32,
+            min[1] + Chunk::CHUNK_SIZE as f32,
             min[2] + Chunk::CHUNK_SIZE as f32,
         ];
 

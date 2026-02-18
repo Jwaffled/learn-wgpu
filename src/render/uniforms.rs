@@ -20,3 +20,19 @@ impl CameraUniform {
             .to_cols_array_2d();
     }
 }
+
+#[repr(C)]
+#[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
+pub struct ChunkOffsetUniform {
+    pub offset: [f32; 3],
+    _pad: f32,
+}
+
+impl ChunkOffsetUniform {
+    pub fn new(offset: [f32; 3]) -> Self {
+        Self {
+            offset,
+            _pad: 0.0,
+        }
+    }
+}

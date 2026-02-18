@@ -9,11 +9,13 @@ use crate::{game::world::{ChunkEvent, FrameEvent, RenderEvent, WorldState}, rend
 pub struct PipelineLayouts {
     pub camera: wgpu::BindGroupLayout,
     pub material: wgpu::BindGroupLayout,
+    pub chunk_offset: wgpu::BindGroupLayout,
 }
 
 impl PipelineLayouts {
     pub const CAMERA_SLOT: u32 = 0;
     pub const MATERIAL_SLOT: u32 = 1;
+    pub const CHUNK_OFFSET_SLOT: u32 = 2;
 
     pub fn new(device: &wgpu::Device) -> Self {
         let camera = device.create_bind_group_layout(
@@ -21,7 +23,7 @@ impl PipelineLayouts {
                 label: Some("Camera Bind Group Layout"),
                 entries: &[
                     wgpu::BindGroupLayoutEntry {
-                        binding: Self::CAMERA_SLOT,
+                        binding: 0,
                         visibility: wgpu::ShaderStages::VERTEX,
                         ty: wgpu::BindingType::Buffer {
                             ty: wgpu::BufferBindingType::Uniform,
@@ -58,9 +60,28 @@ impl PipelineLayouts {
             }
         );
 
+        let chunk_offset = device.create_bind_group_layout(
+            &wgpu::BindGroupLayoutDescriptor {
+                label: Some("Chunk Offset Group Layout"),
+                entries: &[
+                    wgpu::BindGroupLayoutEntry {
+                        binding: 0,
+                        visibility: wgpu::ShaderStages::VERTEX | wgpu::ShaderStages::FRAGMENT,
+                        ty: wgpu::BindingType::Buffer {
+                            ty: wgpu::BufferBindingType::Uniform,
+                            has_dynamic_offset: false,
+                            min_binding_size: None,
+                        },
+                        count: None,
+                    }
+                ]
+            }
+        );
+
         Self {
             camera,
             material,
+            chunk_offset,
         }
     }
 }
@@ -94,6 +115,9 @@ pub struct RenderState {
     
     fps_accumulator: f32,
     fps_frames: u32,
+
+    draw_calls: u32,
+    vertices: u32,
 }
 
 impl RenderState {
@@ -116,7 +140,11 @@ impl RenderState {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: None,
-                required_features: wgpu::Features::TIMESTAMP_QUERY | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+                required_features: 
+                    wgpu::Features::TIMESTAMP_QUERY |
+                    wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS |
+                    wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES |
+                    wgpu::Features::POLYGON_MODE_LINE,
                 experimental_features: wgpu::ExperimentalFeatures::disabled(),
                 required_limits: wgpu::Limits::default(),
                 memory_hints: Default::default(),
@@ -245,7 +273,10 @@ impl RenderState {
             frame_ms,
             fps,
             fps_accumulator,
-            fps_frames
+            fps_frames,
+
+            draw_calls: 0,
+            vertices: 0,
         })
     }
 
@@ -275,14 +306,18 @@ impl RenderState {
         for event in event.chunk_events {
             match event {
                 ChunkEvent::ChunkLoaded { coord, mesh } => {
-                    self.chunk_renderer.load_chunk(&self.device, coord, mesh);
+                    self.vertices += mesh.vertices.len() as u32;
+                    self.chunk_renderer.load_chunk(&self.device, &self.pipeline_layouts, coord, mesh);
                     self.debug_renderer.load_chunk(&self.device, coord);
                 },
                 ChunkEvent::ChunkUnloaded { coord } => {
-                    self.chunk_renderer.unload_chunk(coord);
+                    let mesh = self.chunk_renderer.unload_chunk(coord);
+                    if let Some(mesh) = mesh {
+                        self.vertices -= mesh.vertex_count;
+                    }
                     self.debug_renderer.unload_chunk(coord);
                 },
-                ChunkEvent::ChunkModified { coord, mesh } => self.chunk_renderer.load_chunk(&self.device, coord, mesh),
+                ChunkEvent::ChunkModified { coord, mesh } => self.chunk_renderer.load_chunk(&self.device, &self.pipeline_layouts, coord, mesh),
             }
         }
     }
@@ -341,7 +376,7 @@ impl RenderState {
                 multiview_mask: None
             });
 
-            self.chunk_renderer.draw(
+            self.draw_calls = self.chunk_renderer.draw(
                 &mut render_pass,
                 &self.camera_bind_group,
                 &block_material.bind_group
@@ -411,6 +446,8 @@ impl RenderState {
         FrameStats { 
             fps: self.fps,
             frame_ms: self.frame_ms,
+            draw_calls: self.draw_calls,
+            vertices: self.vertices,
         }
     }
 }

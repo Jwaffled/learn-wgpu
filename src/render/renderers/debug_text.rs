@@ -9,6 +9,8 @@ pub struct DebugStats {
 pub struct FrameStats {
     pub fps: f32,
     pub frame_ms: f32,
+    pub draw_calls: u32,
+    pub vertices: u32,
 }
 
 pub struct ChunkStats {
@@ -67,9 +69,11 @@ impl DebugTextRenderer {
         );
 
         let text = format!(
-            "FPS: {:.1}\nFrame: {:.2} ms\nChunks: {}\nMeshing: {}\nAvg Gen: {:.2}μs\nAvg Mesh: {:.2}μs",
+            "FPS: {:.1}\nFrame: {:.2} ms\nDraw Calls: {}\nVertices: {}\nChunks: {}\nMeshing: {}\nAvg Gen: {:.2}μs\nAvg Mesh: {:.2}μs",
             stats.frame.fps,
             stats.frame.frame_ms,
+            stats.frame.draw_calls,
+            stats.frame.vertices,
             stats.chunk.loaded,
             stats.chunk.in_flight,
             stats.chunk.avg_gen_us,

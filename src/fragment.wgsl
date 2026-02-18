@@ -5,10 +5,11 @@ var block_sampler: sampler;
 
 @fragment
 fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
+
     let color = textureSample(
         block_textures,
         block_sampler,
-        in.tex_coords,
+        in.uv,
         i32(in.texture_index),
     );
 

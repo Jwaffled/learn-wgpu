@@ -6,10 +6,9 @@ pub struct Chunk {
 
 impl Chunk {
     pub const CHUNK_SIZE: usize = 16;
-    pub const CHUNK_HEIGHT: usize = 64;
 
     pub fn empty() -> Self {
-        let blocks = vec![Block::default(); Self::CHUNK_SIZE * Self::CHUNK_HEIGHT * Self::CHUNK_SIZE];
+        let blocks = vec![Block::default(); Self::CHUNK_SIZE * Self::CHUNK_SIZE * Self::CHUNK_SIZE];
         Self {
             blocks,
             dirty: false,
@@ -43,7 +42,7 @@ impl Chunk {
     pub fn get_block(&self, index: LocalCoord) -> Block {
         let (x, y, z) = (index.x, index.y, index.z);
 
-        if x >= Self::CHUNK_SIZE || z >= Self::CHUNK_SIZE || y >= Self::CHUNK_HEIGHT {
+        if x >= Self::CHUNK_SIZE || z >= Self::CHUNK_SIZE || y >= Self::CHUNK_SIZE {
             return Block::Air;
         }
 
@@ -169,11 +168,11 @@ impl ChunkCoord {
 impl WorldCoord {
     pub fn to_chunk(&self) -> (ChunkCoord, LocalCoord) {
         let cx = self.x.div_euclid(Chunk::CHUNK_SIZE as isize);
-        let cy = self.y.div_euclid(Chunk::CHUNK_HEIGHT as isize);
+        let cy = self.y.div_euclid(Chunk::CHUNK_SIZE as isize);
         let cz = self.z.div_euclid(Chunk::CHUNK_SIZE as isize);
 
         let bx = self.x.rem_euclid(Chunk::CHUNK_SIZE as isize) as usize;
-        let by = self.y.rem_euclid(Chunk::CHUNK_HEIGHT as isize) as usize;
+        let by = self.y.rem_euclid(Chunk::CHUNK_SIZE as isize) as usize;
         let bz = self.z.rem_euclid(Chunk::CHUNK_SIZE as isize) as usize;
 
         (

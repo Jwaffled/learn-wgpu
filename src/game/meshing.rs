@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, HashSet}, sync::{Arc, Mutex, mpsc::{self, Receiver, Sender}}, thread, time::{Duration, Instant}};
 
-use crate::{game::{chunk::{Block, BlockFace, Chunk, ChunkCoord, LocalCoord}, generator::WorldGenerator, player::Player, registry::BlockRegistry, world::{ChunkEvent, FrameEvent, WorldState}}, render::{mesh::CpuMesh, renderers::debug_text::ChunkStats, vertex::Vertex}};
+use crate::{game::{chunk::{Block, Chunk, ChunkCoord, LocalCoord}, generator::WorldGenerator, player::Player, registry::BlockRegistry, world::{ChunkEvent, FrameEvent, WorldState}}, render::{mesh::CpuMesh, renderers::debug_text::ChunkStats, vertex::{QuadCorner, Vertex, VoxelFace}}};
 
 pub struct ChunkMesher {
 
@@ -13,9 +13,10 @@ const QUAD_UVS: [[f32; 2]; 4] = [
     [0.0, 1.0],
 ];
 struct Face {
-    direction: BlockFace,
+    direction: VoxelFace,
     normal: [f32; 3],
     corners: [[f32; 3]; 4],
+    corner_pos: [QuadCorner; 4],
     neighbor_offset: (isize, isize, isize),
     uv_indices: [usize; 4],
 }
@@ -23,7 +24,7 @@ struct Face {
 const FACES: [Face; 6] = [
     // +X (East)
     Face {
-        direction: BlockFace::East,
+        direction: VoxelFace::East,
         normal: [1.0, 0.0, 0.0],
         neighbor_offset: (1, 0, 0),
         corners: [
@@ -32,12 +33,18 @@ const FACES: [Face; 6] = [
             [1.0, 1.0, 1.0],
             [1.0, 0.0, 1.0],
         ],
+        corner_pos: [
+            QuadCorner::BottomLeft,
+            QuadCorner::TopLeft,
+            QuadCorner::TopRight,
+            QuadCorner::BottomRight,
+        ],
         uv_indices: [1, 2, 3, 0],
     },
 
     // -X (West)
     Face {
-        direction: BlockFace::West,
+        direction: VoxelFace::West,
         normal: [-1.0, 0.0, 0.0],
         neighbor_offset: (-1, 0, 0),
         corners: [
@@ -46,12 +53,18 @@ const FACES: [Face; 6] = [
             [0.0, 1.0, 0.0],
             [0.0, 0.0, 0.0],
         ],
+        corner_pos: [
+            QuadCorner::BottomLeft,
+            QuadCorner::TopLeft,
+            QuadCorner::TopRight,
+            QuadCorner::BottomRight,
+        ],
         uv_indices: [0, 3, 2, 1],
     },
 
     // +Y (Top)
     Face {
-        direction: BlockFace::Top,
+        direction: VoxelFace::Top,
         normal: [0.0, 1.0, 0.0],
         neighbor_offset: (0, 1, 0),
         corners: [
@@ -60,12 +73,18 @@ const FACES: [Face; 6] = [
             [1.0, 1.0, 0.0],
             [0.0, 1.0, 0.0],
         ],
+        corner_pos: [
+            QuadCorner::BottomLeft,
+            QuadCorner::BottomRight,
+            QuadCorner::TopRight,
+            QuadCorner::TopLeft,
+        ],
         uv_indices: [0, 1, 2, 3],
     },
 
     // -Y (Bottom)
     Face {
-        direction: BlockFace::Bottom,
+        direction: VoxelFace::Bottom,
         normal: [0.0, -1.0, 0.0],
         neighbor_offset: (0, -1, 0),
         corners: [
@@ -74,12 +93,18 @@ const FACES: [Face; 6] = [
             [1.0, 0.0, 1.0],
             [0.0, 0.0, 1.0],
         ],
+        corner_pos: [
+            QuadCorner::BottomLeft,
+            QuadCorner::BottomRight,
+            QuadCorner::TopRight,
+            QuadCorner::TopLeft,
+        ],
         uv_indices: [3, 2, 1, 0],
     },
 
     // +Z (North)
     Face {
-        direction: BlockFace::North,
+        direction: VoxelFace::North,
         normal: [0.0, 0.0, 1.0],
         neighbor_offset: (0, 0, 1),
         corners: [
@@ -88,12 +113,18 @@ const FACES: [Face; 6] = [
             [1.0, 1.0, 1.0],
             [0.0, 1.0, 1.0],
         ],
+        corner_pos: [
+            QuadCorner::BottomLeft,
+            QuadCorner::BottomRight,
+            QuadCorner::TopRight,
+            QuadCorner::TopLeft,
+        ],
         uv_indices: [0, 1, 2, 3],
     },
 
     // -Z (South)
     Face {
-        direction: BlockFace::South,
+        direction: VoxelFace::South,
         normal: [0.0, 0.0, -1.0],
         neighbor_offset: (0, 0, -1),
         corners: [
@@ -102,20 +133,23 @@ const FACES: [Face; 6] = [
             [0.0, 1.0, 0.0],
             [1.0, 1.0, 0.0],
         ],
+        corner_pos: [
+            QuadCorner::BottomLeft,
+            QuadCorner::BottomRight,
+            QuadCorner::TopRight,
+            QuadCorner::TopLeft,
+        ],
         uv_indices: [1, 0, 3, 2],
     },
 ];
 
 
 impl ChunkMesher {
-    pub fn create_mesh(chunk: &Chunk, chunk_coord: ChunkCoord, registry: &BlockRegistry) -> CpuMesh {
+    pub fn create_mesh(chunk: &Chunk, registry: &BlockRegistry) -> CpuMesh {
         let mut vertices = Vec::new();
         let mut indices = Vec::new();
 
-        let (chunk_x, chunk_y, chunk_z) = chunk_coord.as_tuple();
-        let (chunk_offset_x, chunk_offset_y, chunk_offset_z) = (chunk_x * Chunk::CHUNK_SIZE as isize, chunk_y * Chunk::CHUNK_HEIGHT as isize, chunk_z * Chunk::CHUNK_SIZE as isize);
-
-        for y in 0..Chunk::CHUNK_HEIGHT as isize {
+        for y in 0..Chunk::CHUNK_SIZE as isize {
             for z in 0..Chunk::CHUNK_SIZE as isize {
                 for x in 0..Chunk::CHUNK_SIZE as isize {
                     let block = chunk.get_block(LocalCoord { x: x as usize, y: y as usize, z: z as usize });
@@ -143,32 +177,26 @@ impl ChunkMesher {
 
                         let base_index = vertices.len() as u32;
 
-                        let (uv_min, uv_max) = block.get_tile().uv_rect();
                         let def = registry.get(block);
                         let texture_index = match face.direction {
-                            BlockFace::Bottom => def.textures.bottom,
-                            BlockFace::East => def.textures.east,
-                            BlockFace::North => def.textures.north,
-                            BlockFace::South => def.textures.south,
-                            BlockFace::Top => def.textures.top,
-                            BlockFace::West => def.textures.west,
+                            VoxelFace::Bottom => def.textures.bottom,
+                            VoxelFace::East => def.textures.east,
+                            VoxelFace::North => def.textures.north,
+                            VoxelFace::South => def.textures.south,
+                            VoxelFace::Top => def.textures.top,
+                            VoxelFace::West => def.textures.west,
                         };
 
                         for (i, corner) in face.corners.iter().enumerate() {
-                            let uv = QUAD_UVS[face.uv_indices[i]];
-                            vertices.push(Vertex {
-                                position: [
-                                    (x + chunk_offset_x) as f32 + corner[0],
-                                    (y + chunk_offset_y) as f32 + corner[1],
-                                    (z + chunk_offset_z) as f32 + corner[2],
-                                ],
-                                tex_coords: [
-                                    uv_min[0] + uv[0] * (uv_max[0] - uv_min[0]),
-                                    uv_min[1] + (1.0 - uv[1]) * (uv_max[1] - uv_min[1]),
-                                ],
-                                normal: face.normal,
-                                texture_index: texture_index,
-                            });
+                            let data = Vertex::pack_vertex(
+                                x + corner[0] as isize,
+                                y + corner[1] as isize,
+                                z + corner[2] as isize,
+                                face.corner_pos[i],
+                                face.direction,
+                                texture_index
+                            );
+                            vertices.push(Vertex { data });
                         }
 
                         indices.extend_from_slice(&[
@@ -324,7 +352,7 @@ impl ChunkManager {
                 },
                 Task::MeshChunk { coord, chunk } => {
                     let start = Instant::now();
-                    let mesh = ChunkMesher::create_mesh(&chunk, coord, &registry);
+                    let mesh = ChunkMesher::create_mesh(&chunk, &registry);
                     let duration = start.elapsed();
                     TaskResult::ChunkMeshed { coord, mesh, duration }
                 }

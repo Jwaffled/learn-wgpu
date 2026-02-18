@@ -32,7 +32,7 @@ pub enum ChunkEvent {
 }
 
 impl WorldState {
-    const RENDER_DISTANCE: isize = 8;
+    const RENDER_DISTANCE: isize = 16;
     pub async fn new(assets: &mut Assets) -> Self {
         let camera = CameraState {
             position: (8.0, 5.0, 25.0).into(),
