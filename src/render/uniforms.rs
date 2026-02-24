@@ -1,4 +1,4 @@
-use crate::game::world::CameraState;
+use crate::{game::world::CameraState, render::state::Frustum};
 
 #[repr(C)]
 #[derive(Copy, Clone, Debug, bytemuck::Pod, bytemuck::Zeroable)]
@@ -18,6 +18,10 @@ impl CameraUniform {
             .build_view_projection_matrix()
             // .build_isometric_view_projection_matrix()
             .to_cols_array_2d();
+    }
+
+    pub fn frustum(&self) -> Frustum {
+        Frustum::from_view_proj(self.view_proj)
     }
 }
 

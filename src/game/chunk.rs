@@ -2,21 +2,23 @@
 pub struct Chunk {
     blocks: Vec<Block>,
     dirty: bool,
+    coord: ChunkCoord,
 }
 
 impl Chunk {
     pub const CHUNK_SIZE: usize = 16;
 
-    pub fn empty() -> Self {
+    pub fn empty(coord: ChunkCoord) -> Self {
         let blocks = vec![Block::default(); Self::CHUNK_SIZE * Self::CHUNK_SIZE * Self::CHUNK_SIZE];
         Self {
             blocks,
             dirty: false,
+            coord
         }
     }
 
-    pub fn test_chunk() -> Self {
-        let mut chunk = Self::empty();
+    pub fn test_chunk(coord: ChunkCoord) -> Self {
+        let mut chunk = Self::empty(coord);
         for x in 0..16 {
             for z in 0..16 {
                 let coord1 = LocalCoord { x, y: 0, z };
@@ -57,10 +59,19 @@ impl Chunk {
         self.dirty = false;
     }
 
+    pub fn aabb(&self) -> AABB {
+        self.coord.aabb()
+    }
+
     fn block_index(index: LocalCoord) -> usize {
         let (x, y, z) = (index.x, index.y, index.z);
         x + z * Self::CHUNK_SIZE + y * Self::CHUNK_SIZE * Self::CHUNK_SIZE
     }
+}
+
+pub struct AABB {
+    pub min: glam::Vec3,
+    pub max: glam::Vec3,
 }
 
 
@@ -74,16 +85,6 @@ pub struct BlockTextures {
     pub west: u32,
 }
 
-#[derive(Copy, Clone)]
-pub enum BlockFace {
-    Top,
-    Bottom,
-    North,
-    South,
-    East,
-    West,
-}
-
 
 #[derive(Copy, Clone, Debug, Default, PartialEq)]
 pub enum Block {
@@ -92,29 +93,6 @@ pub enum Block {
     Dirt,
     Water,
     Stone
-}
-
-impl Block {
-    pub fn get_tile(&self) -> Tile {
-        match *self {
-            Block::Air => panic!("Tried to grab air texture; none exists"),
-            Block::Dirt => Tile { x: 7, y: 5 },
-            Block::Water => Tile { x: 7, y: 9 },
-            Block::Stone => Tile { x: 2, y: 4 },
-        }
-    }
-}
-
-#[derive(Copy, Clone)]
-pub struct Tile {
-    pub x: u32,
-    pub y: u32,
-}
-
-impl Tile {
-    pub fn uv_rect(&self) -> ([f32; 2], [f32; 2]) {
-        ([0.0, 0.0], [1.0, 1.0])
-    }
 }
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Hash)]
@@ -162,6 +140,22 @@ impl From<(usize, usize, usize)> for LocalCoord {
 impl ChunkCoord {
     pub fn as_tuple(&self) -> (isize, isize, isize) {
         return (self.x, self.y, self.z);
+    }
+
+    pub fn aabb(&self) -> AABB {
+        let min = glam::Vec3::new(
+            (self.x * Chunk::CHUNK_SIZE as isize) as f32,
+            (self.y * Chunk::CHUNK_SIZE as isize) as f32,
+            (self.z * Chunk::CHUNK_SIZE as isize) as f32,
+        );
+
+        let max = glam::Vec3::new(
+            min.x + Chunk::CHUNK_SIZE as f32,
+            min.y + Chunk::CHUNK_SIZE as f32,
+            min.z + Chunk::CHUNK_SIZE as f32,
+        );
+
+        AABB { min, max }
     }
 }
 

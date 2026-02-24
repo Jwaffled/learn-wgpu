@@ -287,7 +287,7 @@ impl ChunkManager {
                     self.total_meshed += 1;
 
                     if self.chunks.contains_key(&coord) {
-                        frame_event.chunk_events.push(ChunkEvent::ChunkLoaded { coord, mesh });
+                        frame_event.chunk_events.push(ChunkEvent::ChunkMeshReady { coord, mesh });
                     }
                 }
             }

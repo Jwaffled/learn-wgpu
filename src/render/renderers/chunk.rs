@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use wgpu::util::DeviceExt;
 
-use crate::{game::chunk::{Chunk, ChunkCoord}, render::{mesh::CpuMesh, state::PipelineLayouts, uniforms::ChunkOffsetUniform, vertex::Vertex}};
+use crate::{game::chunk::{AABB, Chunk, ChunkCoord}, render::{mesh::CpuMesh, state::{Frustum, PipelineLayouts}, uniforms::ChunkOffsetUniform, vertex::Vertex}};
 
 pub struct ChunkGpuMesh {
     pub vertex_buffer: wgpu::Buffer,
@@ -11,6 +11,7 @@ pub struct ChunkGpuMesh {
     pub chunk_offset: wgpu::BindGroup,
     pub index_count: u32,
     pub vertex_count: u32,
+    pub aabb: AABB,
 }
 
 pub struct ChunkRenderer {
@@ -132,6 +133,8 @@ impl ChunkRenderer {
             }
         );
 
+        let aabb = chunk_coord.aabb();
+
         self.chunk_meshes.insert(
             chunk_coord,
             ChunkGpuMesh {
@@ -141,6 +144,7 @@ impl ChunkRenderer {
                 chunk_offset,
                 index_count: mesh.indices.len() as u32,
                 vertex_count: mesh.vertices.len() as u32,
+                aabb,
             }
         );
     }
@@ -153,7 +157,8 @@ impl ChunkRenderer {
         &'a self,
         render_pass: &mut wgpu::RenderPass<'a>,
         camera_bind_group: &'a wgpu::BindGroup,
-        material_bind_group: &'a wgpu::BindGroup
+        material_bind_group: &'a wgpu::BindGroup,
+        frustum: &Frustum,
     ) -> u32 {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(PipelineLayouts::CAMERA_SLOT, camera_bind_group, &[]);
@@ -161,11 +166,13 @@ impl ChunkRenderer {
 
         let mut draw_calls = 0;
         for mesh in self.chunk_meshes.values() {
-            render_pass.set_bind_group(PipelineLayouts::CHUNK_OFFSET_SLOT, &mesh.chunk_offset, &[]);
-            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
-            render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
-            draw_calls += 1;
+            if frustum.intersects_aabb(&mesh.aabb) {
+                render_pass.set_bind_group(PipelineLayouts::CHUNK_OFFSET_SLOT, &mesh.chunk_offset, &[]);
+                render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
+                render_pass.set_index_buffer(mesh.index_buffer.slice(..), wgpu::IndexFormat::Uint32);
+                render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+                draw_calls += 1;
+            }
         }
 
         draw_calls

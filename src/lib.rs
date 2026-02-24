@@ -50,6 +50,7 @@ impl ApplicationHandler<RenderState> for App {
         window.set_cursor_grab(winit::window::CursorGrabMode::Locked)
             .or_else(|_| window.set_cursor_grab(winit::window::CursorGrabMode::Confined))
             .unwrap();
+        window.set_maximized(true);
         self.window = Some(window.clone());
         self.cursor_visible = false;
         let render_state = pollster::block_on(RenderState::new(window)).unwrap();

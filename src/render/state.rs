@@ -4,7 +4,7 @@ use glyphon::{Resolution, Viewport};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
 
-use crate::{game::world::{ChunkEvent, FrameEvent, RenderEvent, WorldState}, render::{assets::Assets, material::MaterialHandle, mesh::{CpuMesh, Mesh, MeshHandle}, model::{DrawModel, ModelHandle}, renderers::{chunk::ChunkRenderer, debug::DebugRenderer, debug_text::{DebugStats, DebugTextRenderer, FrameStats}}, scene::RenderScene, texture, uniforms::CameraUniform, vertex::{DebugVertex, Vertex}}};
+use crate::{game::{chunk::AABB, world::{CameraState, ChunkEvent, FrameEvent, RenderEvent, WorldState}}, render::{assets::Assets, material::MaterialHandle, mesh::{CpuMesh, Mesh, MeshHandle}, model::{DrawModel, ModelHandle}, renderers::{chunk::ChunkRenderer, debug::DebugRenderer, debug_text::{DebugStats, DebugTextRenderer, FrameStats}}, scene::RenderScene, texture, uniforms::CameraUniform, vertex::{DebugVertex, Vertex}}};
 
 pub struct PipelineLayouts {
     pub camera: wgpu::BindGroupLayout,
@@ -104,6 +104,12 @@ pub struct RenderState {
     camera_uniform: CameraUniform,
     camera_buffer: wgpu::Buffer,
     camera_bind_group: wgpu::BindGroup,
+    frustum: Frustum,
+
+    debug_camera: CameraState,
+    debug_camera_uniform: CameraUniform,
+    debug_camera_buffer: wgpu::Buffer,
+    debug_camera_bind_group: wgpu::BindGroup,
 
     depth_texture: texture::Texture,
     chunk_material: Option<MaterialHandle>,
@@ -190,11 +196,31 @@ impl RenderState {
         });
 
         let camera_uniform = CameraUniform::new();
+        let frustum = camera_uniform.frustum();
 
         let camera_buffer = device.create_buffer_init(
             &wgpu::util::BufferInitDescriptor {
                 label: Some("Camera Buffer"),
                 contents: bytemuck::cast_slice(&[camera_uniform]),
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            }
+        );
+
+        let debug_camera_uniform = CameraUniform::new();
+        let debug_camera = CameraState { 
+            position: (-200.0, 100.0, -200.0).into(),
+            yaw: 0.0, // -90 degrees, points towards -Z
+            pitch: -0.2,
+            fov_y_radians: std::f32::consts::FRAC_PI_2,
+            aspect: 800.0 / 600.0,
+            znear: 0.1,
+            zfar: 1000.0,
+        };
+
+        let debug_camera_buffer = device.create_buffer_init(
+            &wgpu::util::BufferInitDescriptor {
+                label: Some("Debug Camera Buffer"),
+                contents: bytemuck::cast_slice(&[debug_camera_uniform]),
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             }
         );
@@ -211,6 +237,19 @@ impl RenderState {
                         resource: camera_buffer.as_entire_binding()
                     }
                 ],
+            }
+        );
+
+        let debug_camera_bind_group = device.create_bind_group(
+            &wgpu::BindGroupDescriptor {
+                label: Some("Debug Camera Bind Group"),
+                layout: &pipeline_layouts.camera,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: PipelineLayouts::CAMERA_SLOT,
+                        resource: debug_camera_buffer.as_entire_binding(),
+                    }
+                ]
             }
         );
 
@@ -264,6 +303,12 @@ impl RenderState {
             camera_uniform,
             camera_buffer,
             camera_bind_group,
+            frustum,
+
+            debug_camera,
+            debug_camera_uniform,
+            debug_camera_buffer,
+            debug_camera_bind_group,
 
             depth_texture,
             chunk_material: None,
@@ -291,6 +336,7 @@ impl RenderState {
                 width,
                 height
             });
+            self.debug_camera.aspect = width as f32 / height as f32;
         }
     }
 
@@ -305,7 +351,7 @@ impl RenderState {
 
         for event in event.chunk_events {
             match event {
-                ChunkEvent::ChunkLoaded { coord, mesh } => {
+                ChunkEvent::ChunkMeshReady { coord, mesh } => {
                     self.vertices += mesh.vertices.len() as u32;
                     self.chunk_renderer.load_chunk(&self.device, &self.pipeline_layouts, coord, mesh);
                     self.debug_renderer.load_chunk(&self.device, coord);
@@ -376,10 +422,20 @@ impl RenderState {
                 multiview_mask: None
             });
 
+            render_pass.set_viewport(
+                0.0,
+                0.0,
+                self.config.width as f32,
+                self.config.height as f32,
+                0.0,
+                1.0
+            );
+
             self.draw_calls = self.chunk_renderer.draw(
                 &mut render_pass,
                 &self.camera_bind_group,
-                &block_material.bind_group
+                &block_material.bind_group,
+                &self.frustum
             );
 
             if world.debug_enabled {
@@ -387,6 +443,21 @@ impl RenderState {
                     &mut render_pass,
                     &self.camera_bind_group
                 );
+            }
+
+            if world.debug_enabled {
+                let pip_width = self.config.width as f32 * 0.3;
+                let pip_height = self.config.height as f32 * 0.3;
+                render_pass.set_viewport(
+                    self.config.width as f32 - pip_width - 10.0,
+                    10.0,
+                    pip_width,
+                    pip_height,
+                    0.0,
+                    1.0
+                );
+
+                self.chunk_renderer.draw(&mut render_pass, &self.debug_camera_bind_group, &block_material.bind_group, &self.frustum);
             }
         }
 
@@ -435,10 +506,17 @@ impl RenderState {
 
     pub fn update(&mut self, world_state: &WorldState) {
         self.camera_uniform.update(&world_state.camera);
+        self.debug_camera_uniform.update(&self.debug_camera);
+        self.frustum = self.camera_uniform.frustum();
         self.queue.write_buffer(
             &self.camera_buffer,
             0,
             bytemuck::bytes_of(&self.camera_uniform)
+        );
+        self.queue.write_buffer(
+            &self.debug_camera_buffer,
+            0,
+            bytemuck::bytes_of(&self.debug_camera_uniform)
         );
     }
 
@@ -449,5 +527,59 @@ impl RenderState {
             draw_calls: self.draw_calls,
             vertices: self.vertices,
         }
+    }
+}
+
+pub struct Plane {
+    pub normal: glam::Vec3,
+    pub d: f32,
+}
+
+impl Plane {
+    fn new(x: f32, y: f32, z: f32, w: f32) -> Self {
+        let normal = glam::Vec3::new(x, y, z);
+        let length = normal.length();
+
+        Self {
+            normal: normal / length,
+            d: w / length
+        }
+    }
+}
+
+pub struct Frustum {
+    pub planes: [Plane; 6]
+}
+
+impl Frustum {
+    pub fn from_view_proj(m: [[f32; 4]; 4]) -> Self {
+        let left = Plane::new(m[0][3] + m[0][0], m[1][3] + m[1][0], m[2][3] + m[2][0], m[3][3] + m[3][0]);
+        let right = Plane::new(m[0][3] - m[0][0], m[1][3] - m[1][0], m[2][3] - m[2][0], m[3][3] - m[3][0]);
+        let bottom = Plane::new(m[0][3] + m[0][1], m[1][3] + m[1][1], m[2][3] + m[2][1], m[3][3] + m[3][1]);
+        let top = Plane::new(m[0][3] - m[0][1], m[1][3] - m[1][1], m[2][3] - m[2][1], m[3][3] - m[3][1]);
+        let near = Plane::new(m[0][3] + m[0][2], m[1][3] + m[1][2], m[2][3] + m[2][2], m[3][3] + m[3][2]);
+        let far = Plane::new(m[0][3] - m[0][2], m[1][3] - m[1][2], m[2][3] - m[2][2], m[3][3] - m[3][2]);
+
+        let planes = [
+            left, right, bottom, top, near, far
+        ];
+
+        Self { planes }
+    }
+
+    pub fn intersects_aabb(&self, aabb: &AABB) -> bool {
+        for plane in &self.planes {
+            let p = glam::Vec3::new(
+                if plane.normal.x >= 0.0 { aabb.max.x } else { aabb.min.x },
+                if plane.normal.y >= 0.0 { aabb.max.y } else { aabb.min.y },
+                if plane.normal.z >= 0.0 { aabb.max.z } else { aabb.min.z },
+            );
+
+            if plane.normal.dot(p) + plane.d < 0.0 {
+                return false;
+            }
+        }
+
+        true
     }
 }

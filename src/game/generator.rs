@@ -16,7 +16,7 @@ impl WorldGenerator {
     }
 
     pub fn generate_chunk(&self, coord: ChunkCoord) -> Chunk {
-        let mut chunk = Chunk::empty();
+        let mut chunk = Chunk::empty(coord);
         for x in 0..Chunk::CHUNK_SIZE {
             for z in 0..Chunk::CHUNK_SIZE {
                 let world_x = coord.x * Chunk::CHUNK_SIZE as isize + x as isize;

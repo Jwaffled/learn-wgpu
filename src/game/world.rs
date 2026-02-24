@@ -26,7 +26,7 @@ pub enum RenderEvent {
 }
 
 pub enum ChunkEvent {
-    ChunkLoaded { coord: ChunkCoord, mesh: CpuMesh },
+    ChunkMeshReady { coord: ChunkCoord, mesh: CpuMesh },
     ChunkUnloaded { coord: ChunkCoord },
     ChunkModified { coord: ChunkCoord, mesh: CpuMesh },
 }

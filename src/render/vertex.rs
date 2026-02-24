@@ -22,21 +22,6 @@ impl Vertex {
                     format: wgpu::VertexFormat::Uint32,
                     shader_location: 0,
                 },
-                // wgpu::VertexAttribute {
-                //     offset: mem::size_of::<[f32; 3]>() as wgpu::BufferAddress,
-                //     format: wgpu::VertexFormat::Float32x2,
-                //     shader_location: 1,
-                // },
-                // wgpu::VertexAttribute {
-                //     offset: mem::size_of::<[f32; 5]>() as wgpu::BufferAddress,
-                //     format: wgpu::VertexFormat::Float32x3,
-                //     shader_location: 2,
-                // },
-                // wgpu::VertexAttribute {
-                //     offset: mem::size_of::<[f32; 8]>() as wgpu::BufferAddress,
-                //     format: wgpu::VertexFormat::Uint32,
-                //     shader_location: 3,
-                // }
             ]
         }
     }
